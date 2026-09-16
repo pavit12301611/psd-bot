@@ -15,6 +15,19 @@ Double-click **`run.bat`** — that's it. It will:
 
 After that, re-running `run.bat` just starts the app. Press `Ctrl+C` in its window to stop.
 
+> **Prefer no localhost at all?** There's a terminal interface that replaces the
+> browser window entirely — no web server, no browser, and no port:
+>
+> * **Windows** — double-click **`tui.bat`**.
+> * **Linux / macOS** — run **`./tui.sh`**.
+>
+> It runs the exact same psd.ai backend (same chats, history, memory, settings)
+> and draws the UI inside your terminal. Type a message and press Enter; press
+> `Esc` to reach the command keys (`q` quit, `n` new chat, `m` model picker,
+> `e` agent mode, …). On first run it sets everything up in the terminal, just
+> like the browser first-run flow. See the banner inside the app or
+> `python psd.ai/psd_tui.py --help` for the full key list and options.
+
 ## The local AI model group
 
 Step 4 opens a **second window** titled *psd.ai - local model group*. On the
