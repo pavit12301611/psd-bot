@@ -11,14 +11,14 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <!-- Disable iOS / Android auto-linkifying of numbers (phone/date/address)
        in email bodies — was wrapping random digits in <a href="tel:..."> with
-       browser-default styling that didn't match the Odysseus theme. -->
+       browser-default styling that didn't match the psd.ai theme. -->
   <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <script nonce="{{CSP_NONCE}}">
-  window._odysseusLoadTime = Date.now();
+  window._psd_aiLoadTime = Date.now();
   (function(){
     try {
-      var t = JSON.parse(localStorage.getItem('odysseus-theme'));
+      var t = JSON.parse(localStorage.getItem('psd_ai-theme'));
       if (t && t.colors) {
         var s = document.documentElement.style;
         var c = t.colors;
@@ -88,7 +88,7 @@
       // Apply UI text-size scale early (global accessibility pref, independent
       // of the active theme) so there's no flash on load.
       try {
-        var _us = localStorage.getItem('odysseus-ui-scale');
+        var _us = localStorage.getItem('psd_ai-ui-scale');
         if (_us && _us !== '100') document.documentElement.classList.add('ui-scale-' + _us);
       } catch(e){}
       // Restore the sidebar mode before first paint. Otherwise the icon rail
@@ -98,7 +98,7 @@
         if (_mobileStartup) {
           document.documentElement.classList.add('ody-sidebar-off', 'ody-mobile-startup-sidebar-hidden');
         } else {
-          var _sm = localStorage.getItem('odysseus-sidebar-mode') || 'full';
+          var _sm = localStorage.getItem('psd_ai-sidebar-mode') || 'full';
           if (_sm === 'mini') document.documentElement.classList.add('ody-sidebar-mini');
           else if (_sm === 'off') document.documentElement.classList.add('ody-sidebar-off');
         }
@@ -119,7 +119,7 @@
   (function(){
     try {
       var path = (window.location.pathname || '').toLowerCase();
-      var theme = (function(){ try { return JSON.parse(localStorage.getItem('odysseus-theme')); } catch(_) { return null; } })();
+      var theme = (function(){ try { return JSON.parse(localStorage.getItem('psd_ai-theme')); } catch(_) { return null; } })();
       var ac = (theme && (theme.red || theme.colors && theme.colors.red)) || '#e06c75';
       // Shapes are line-stroke SVGs (no emoji glyphs). Each entry returns
       // the inner SVG markup rendered against currentColor=`ac`.
@@ -285,7 +285,7 @@
     },150);
     // startupShell.js hides the loader as soon as the shell is wired; it calls
     // back here to stop the wave because this interval is owned by this script.
-    window.__odysseusLoaderWaveStop=function(){clearInterval(iv)};
+    window.__psd_aiLoaderWaveStop=function(){clearInterval(iv)};
     // Last-resort fallback for a boot that never reaches app.js at all. Must
     // still REMOVE the node: sessions.js reads its presence as "startup in
     // progress" and stops clearing the composer while it is around.
@@ -1066,7 +1066,7 @@
         (function(){
           function applyDefault(dc) {
             if (!dc || !dc.model) return false;
-            window.__odysseusDefaultChat = dc;
+            window.__psd_aiDefaultChat = dc;
             var label = document.getElementById('model-picker-label');
             if (!label) return false;
             label.textContent = String(dc.model).split('/').pop();
@@ -1074,14 +1074,14 @@
             return true;
           }
           try {
-            var dc = JSON.parse(localStorage.getItem('odysseus-default-chat-cache') || 'null');
+            var dc = JSON.parse(localStorage.getItem('psd_ai-default-chat-cache') || 'null');
             if (applyDefault(dc)) return;
           } catch (_) {}
           fetch('/api/default-chat', { credentials: 'same-origin' })
             .then(function(r){ return r.ok ? r.json() : null; })
             .then(function(dc){
               if (!applyDefault(dc)) return;
-              try { localStorage.setItem('odysseus-default-chat-cache', JSON.stringify(dc)); } catch (_) {}
+              try { localStorage.setItem('psd_ai-default-chat-cache', JSON.stringify(dc)); } catch (_) {}
             })
             .catch(function(){});
         })();

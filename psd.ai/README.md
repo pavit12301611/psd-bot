@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/branding/odysseus-wordmark.png" alt="Odysseus" width="238">
+  <img src="assets/branding/psd_ai-wordmark.png" alt="psd.ai" width="238">
 </p>
 
 <p align="center">
@@ -14,27 +14,27 @@
 </p>
 
 <p align="center">
-  <a href="https://repology.org/project/odysseus-ai/versions"><img src="https://repology.org/badge/vertical-allrepos/odysseus-ai.svg" alt="Packaging status"></a>
+  <a href="https://repology.org/project/psd_ai-ai/versions"><img src="https://repology.org/badge/vertical-allrepos/psd_ai-ai.svg" alt="Packaging status"></a>
 </p>
 
 <p align="center">
-  <img src="assets/branding/odysseus-browser.jpg" alt="Odysseus interface">
+  <img src="assets/branding/psd_ai-browser.jpg" alt="psd.ai interface">
 </p>
 
 ---
 
 ## Quick Start
 
-> `dev` is the default branch and gets the newest changes first. Use [`main`](https://github.com/odysseus-dev/odysseus/tree/main) if you want the more curated branch.
+> `dev` is the default branch and gets the newest changes first. Use [`main`](https://github.com/pavit12301611/psd-bot/tree/main) if you want the more curated branch.
 
 ```bash
-git clone https://github.com/odysseus-dev/odysseus.git
-cd odysseus
+git clone https://github.com/pavit12301611/psd-bot.git
+cd psd_ai
 cp .env.example .env
 docker compose up -d --build
 ```
 
-Open `http://localhost:7000` when the containers are healthy. The first admin password is printed in `docker compose logs odysseus`.
+Open `http://localhost:7000` when the containers are healthy. The first admin password is printed in `docker compose logs psd_ai`.
 
 Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration live in the [setup guide](website/setup.md).
 
@@ -51,7 +51,7 @@ Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration
 
 ## Demo
 
-A full hover-to-play tour lives on the [Odysseus landing page](https://odysseus-dev.github.io/odysseus/). Its source lives under [`website/`](website/).
+A full hover-to-play tour lives on the [psd.ai landing page](https://pavit12301611.github.io/psd-bot/). Its source lives under [`website/`](website/).
 
 ## Contributing
 
@@ -59,7 +59,7 @@ Help is welcome. The best entry points are fresh-install testing, provider setup
 
 ## Security
 
-Odysseus is a self-hosted workspace with powerful local tools. Keep auth enabled, keep private data out of Git, and do not expose raw model/service ports publicly.
+psd.ai is a self-hosted workspace with powerful local tools. Keep auth enabled, keep private data out of Git, and do not expose raw model/service ports publicly.
 
 - Keep `AUTH_ENABLED=true` for any network-accessible deployment.
 - Keep `LOCALHOST_BYPASS=false` outside local development.
@@ -68,11 +68,11 @@ Deployment details are in the [setup guide](website/setup.md#security-notes).
 
 ## Star History
 
-<a href="https://star-history.dera.page/#odysseus-dev/odysseus&type=date&legend=top-left">
+<a href="https://star-history.dera.page/#pavit12301611/psd-bot&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=odysseus-dev/odysseus&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=odysseus-dev/odysseus&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=odysseus-dev/odysseus&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=pavit12301611/psd-bot&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=pavit12301611/psd-bot&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=pavit12301611/psd-bot&type=date&legend=top-left" />
  </picture>
 </a>
 

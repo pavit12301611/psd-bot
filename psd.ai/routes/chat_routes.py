@@ -2626,7 +2626,7 @@ def setup_chat_routes(
         return StreamingResponse(
             agent_runs.subscribe(session, _detached_run),
             media_type="text/event-stream",
-            headers={"X-Odysseus-Run-Id": _detached_run.run_id},
+            headers={"X-psd.ai-Run-Id": _detached_run.run_id},
         )
 
     # ------------------------------------------------------------------ #
@@ -2642,7 +2642,7 @@ def setup_chat_routes(
         return StreamingResponse(
             agent_runs.subscribe(session_id, _active_run),
             media_type="text/event-stream",
-            headers={"X-Odysseus-Run-Id": _active_run.run_id},
+            headers={"X-psd.ai-Run-Id": _active_run.run_id},
         )
 
     # ------------------------------------------------------------------ #
@@ -2652,7 +2652,7 @@ def setup_chat_routes(
     @router.post("/api/chat/stop/{session_id}")
     async def chat_stop(request: Request, session_id: str) -> Dict[str, Any]:
         _verify_session_owner(request, session_id)
-        _expected_run_id = request.headers.get("X-Odysseus-Run-Id")
+        _expected_run_id = request.headers.get("X-psd.ai-Run-Id")
         stopped = agent_runs.stop(session_id, _expected_run_id)
         return {"stopped": stopped}
 

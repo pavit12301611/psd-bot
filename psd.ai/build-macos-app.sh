@@ -1,22 +1,22 @@
 #!/bin/bash
-# Build a downloadable macOS launcher app + .dmg for Odysseus.
+# Build a downloadable macOS launcher app + .dmg for psd.ai.
 #
 #   ./build-macos-app.sh
 #
 # Produces:
-#   dist/Odysseus.app   — double-click: starts the local server (using this
+#   dist/psd.ai.app   — double-click: starts the local server (using this
 #                         repo's venv) and opens the UI in an app-style window.
-#   dist/Odysseus.dmg   — drag-to-Applications disk image (the downloadable).
+#   dist/psd.ai.dmg   — drag-to-Applications disk image (the downloadable).
 #
 # This is a *launcher* wrapper: it drives the venv we set up in this repo, it
 # does not bundle Python. The install path is baked into the app at build time,
-# so rebuild if you move the repo. Override the port with ODYSSEUS_PORT.
+# so rebuild if you move the repo. Override the port with PSD_AI_PORT.
 set -e
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_NAME="Odysseus"
+APP_NAME="psd.ai"
 INSTALL_DIR="$REPO_DIR"
-PORT="${ODYSSEUS_PORT:-7860}"
+PORT="${PSD_AI_PORT:-7860}"
 DIST="$REPO_DIR/dist"
 APP="$DIST/$APP_NAME.app"
 
@@ -28,21 +28,21 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 # ── Icon (best effort) — center-crop the branding image to a square .icns ──
-if [ -f "$REPO_DIR/assets/branding/odysseus.jpg" ] && command -v sips >/dev/null 2>&1; then
+if [ -f "$REPO_DIR/assets/branding/psd_ai.jpg" ] && command -v sips >/dev/null 2>&1; then
   TMPIMG="$(mktemp -d)"
   # Center-crop to a square, scale to 512 (sips' icns encoder caps at 512), and
   # let sips emit the .icns directly — more robust across macOS versions than
   # building an .iconset by hand.
-  sips -c 720 720 "$REPO_DIR/assets/branding/odysseus.jpg" --out "$TMPIMG/sq.png" >/dev/null 2>&1 || cp "$REPO_DIR/assets/branding/odysseus.jpg" "$TMPIMG/sq.png"
+  sips -c 720 720 "$REPO_DIR/assets/branding/psd_ai.jpg" --out "$TMPIMG/sq.png" >/dev/null 2>&1 || cp "$REPO_DIR/assets/branding/psd_ai.jpg" "$TMPIMG/sq.png"
   sips -z 512 512 "$TMPIMG/sq.png" --out "$TMPIMG/icon.png" >/dev/null 2>&1
-  if sips -s format icns "$TMPIMG/icon.png" --out "$APP/Contents/Resources/odysseus.icns" >/dev/null 2>&1; then
-    echo "  icon:        odysseus.icns"
+  if sips -s format icns "$TMPIMG/icon.png" --out "$APP/Contents/Resources/psd_ai.icns" >/dev/null 2>&1; then
+    echo "  icon:        psd_ai.icns"
   else
     echo "  icon:        (skipped — conversion failed)"
   fi
   rm -rf "$TMPIMG"
 else
-  echo "  icon:        (skipped — no assets/branding/odysseus.jpg)"
+  echo "  icon:        (skipped — no assets/branding/psd_ai.jpg)"
 fi
 
 # ── Info.plist ──
@@ -53,12 +53,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <dict>
     <key>CFBundleName</key>            <string>$APP_NAME</string>
     <key>CFBundleDisplayName</key>     <string>$APP_NAME</string>
-    <key>CFBundleIdentifier</key>      <string>com.odysseus.launcher</string>
+    <key>CFBundleIdentifier</key>      <string>com.psd_ai.launcher</string>
     <key>CFBundleVersion</key>         <string>1.0</string>
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleExecutable</key>      <string>$APP_NAME</string>
-    <key>CFBundleIconFile</key>        <string>odysseus</string>
+    <key>CFBundleIconFile</key>        <string>psd_ai</string>
     <key>LSMinimumSystemVersion</key>  <string>11.0</string>
     <key>NSHighResolutionCapable</key> <true/>
     <key>LSUIElement</key>             <false/>
@@ -69,7 +69,7 @@ PLIST
 # ── Launcher executable (placeholders filled below) ──
 cat > "$APP/Contents/MacOS/$APP_NAME.tmpl" <<'LAUNCHER'
 #!/bin/bash
-# Odysseus.app — start the local server and open the UI in an app window.
+# psd.ai.app — start the local server and open the UI in an app window.
 INSTALL_DIR="__INSTALL_DIR__"
 PORT="__PORT__"
 URL="http://127.0.0.1:${PORT}"
@@ -80,15 +80,15 @@ export APP_PORT="$PORT"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 UVICORN="$INSTALL_DIR/venv/bin/uvicorn"
-LOG="$INSTALL_DIR/logs/odysseus-app.log"
+LOG="$INSTALL_DIR/logs/psd_ai-app.log"
 
-notify() { /usr/bin/osascript -e "display notification \"$1\" with title \"Odysseus\"" >/dev/null 2>&1; }
+notify() { /usr/bin/osascript -e "display notification \"$1\" with title \"psd.ai\"" >/dev/null 2>&1; }
 die_gui() {
-  /usr/bin/osascript -e "display dialog \"$1\" with title \"Odysseus\" buttons {\"OK\"} default button 1 with icon stop" >/dev/null 2>&1
+  /usr/bin/osascript -e "display dialog \"$1\" with title \"psd.ai\" buttons {\"OK\"} default button 1 with icon stop" >/dev/null 2>&1
   exit 1
 }
 
-[ -x "$UVICORN" ] || die_gui "Odysseus isn't set up yet. Open Terminal and run:
+[ -x "$UVICORN" ] || die_gui "psd.ai isn't set up yet. Open Terminal and run:
 
 cd $INSTALL_DIR
 python3.11 -m venv venv
@@ -137,7 +137,7 @@ trap 'kill $SERVER_PID 2>/dev/null; exit 0' TERM INT
 READY=0
 for i in $(seq 1 120); do
   /usr/bin/curl -s -o /dev/null --max-time 2 "$URL" && { READY=1; break; }
-  kill -0 "$SERVER_PID" 2>/dev/null || die_gui "Odysseus failed to start. Log:
+  kill -0 "$SERVER_PID" 2>/dev/null || die_gui "psd.ai failed to start. Log:
 $LOG"
   sleep 1
 done
@@ -145,7 +145,7 @@ done
 if [ "$READY" = "1" ]; then
   open_ui
 else
-  notify "Odysseus is taking a while — open $URL once it finishes starting."
+  notify "psd.ai is taking a while — open $URL once it finishes starting."
 fi
 wait "$SERVER_PID"
 LAUNCHER
@@ -174,4 +174,4 @@ echo "  $APP"
 echo "  $DIST/$APP_NAME.dmg"
 echo ""
 echo "Run it:        open '$APP'"
-echo "Install:       open '$DIST/$APP_NAME.dmg'  (drag Odysseus to Applications)"
+echo "Install:       open '$DIST/$APP_NAME.dmg'  (drag psd.ai to Applications)"

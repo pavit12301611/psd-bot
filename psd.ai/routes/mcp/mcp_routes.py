@@ -22,7 +22,7 @@ router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
 
 def _mcp_oauth_base_dir() -> Path:
-    """Directory that may contain OAuth files managed by Odysseus."""
+    """Directory that may contain OAuth files managed by psd.ai."""
     return Path(MCP_OAUTH_DIR).resolve(strict=False)
 
 
@@ -495,7 +495,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
         if resolve_pending(state, code):
             return HTMLResponse(_oauth_result_page(
                 "Authorization Successful",
-                "The MCP server is connecting. You can close this window and return to Odysseus.",
+                "The MCP server is connecting. You can close this window and return to psd.ai.",
                 success=True,
             ))
         # Legacy Google path: state is the server_id
@@ -521,7 +521,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
         if state and resolve_pending(state, code):
             return HTMLResponse(_oauth_result_page(
                 "Authorization Successful",
-                "The MCP server is connecting. You can close this window and return to Odysseus.",
+                "The MCP server is connecting. You can close this window and return to psd.ai.",
                 success=True,
             ))
 
