@@ -33,7 +33,30 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-import gui.backend as backend  # noqa: E402  (heavy uvicorn import)
+try:
+    import gui.backend as backend  # noqa: E402  (heavy uvicorn import)
+except SystemExit:
+    raise
+except BaseException as _be_exc:  # noqa: BLE001
+    # The backend import pulls in uvicorn/FastAPI/etc. If a venv predates the
+    # GUI (or a dep is corrupt), this fails before _run()'s crash handler can
+    # wrap it — so leave a readable crash log and fail loudly here instead of
+    # the window silently closing.
+    import traceback as _tb
+
+    _LOG_PATH = os.path.join(_SCRIPT_DIR, "psd_gui_crash.log")
+    sys.stderr.write(
+        "psd_gui: could not import the psd.ai backend: %r\n"
+        "Reinstall dependencies with:  pip install -r requirements.txt\n" % (_be_exc,)
+    )
+    try:
+        with open(_LOG_PATH, "a", encoding="utf-8") as _fh:
+            _fh.write("\n=== psd_gui import crash ===\n")
+            _fh.write(_tb.format_exc())
+        sys.stderr.write("Full details written to: %s\n" % _LOG_PATH)
+    except Exception:
+        pass
+    raise SystemExit(1)
 
 # --------------------------------------------------------------------------- #
 # Qt binding (prefer PySide6, fall back to PyQt5).
@@ -1570,5 +1593,32 @@ def main(argv: Optional[List[str]] = None) -> int:
     return int(rc)
 
 
+def _run() -> int:
+    """Top-level entry with a crash log so a silent window close still leaves
+    a readable trace instead of vanishing without explanation."""
+    try:
+        return main()
+    except SystemExit:
+        raise
+    except BaseException as exc:  # noqa: BLE001
+        import traceback
+
+        log_path = os.path.join(_SCRIPT_DIR, "psd_gui_crash.log")
+        try:
+            with open(log_path, "a", encoding="utf-8") as fh:
+                fh.write("\n=== psd_gui crash ===\n")
+                fh.write(traceback.format_exc())
+        except Exception:
+            pass
+        traceback.print_exc()
+        try:
+            sys.stderr.write(
+                f"\npsd.ai crashed: {exc}\nFull details written to: {log_path}\n"
+            )
+        except Exception:
+            pass
+        return 1
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_run())

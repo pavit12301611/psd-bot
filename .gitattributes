@@ -1,0 +1,9 @@
+# Line-endings for shell scripts. cmd.exe mis-parses LF-only .bat/.cmd files
+# (silent closes, skipped parenthesized blocks), so Windows scripts are kept
+# byte-for-byte as CRLF in the repository (-text = no line-ending conversion
+# on checkout OR archive download). Keep .bat/.cmd/.ps1 written with CRLF and
+# .sh with LF in the working tree; Git will not normalise either.
+*.bat -text
+*.cmd -text
+*.ps1 -text
+*.sh  text eol=lf

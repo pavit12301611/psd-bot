@@ -106,10 +106,19 @@ REM ----------------------------------------------------------------
 REM  3. Install dependencies (first run only - keeps restarts fast).
 REM     Adds PySide6 for the desktop (GUI) window.
 REM ----------------------------------------------------------------
-if not exist "venv\.deps_ok" (
+REM A venv created by an older run.bat predates PySide6 (its .deps_ok marker
+REM exists but the GUI binding is missing). Verify the binding actually
+REM imports before trusting the marker, otherwise reinstall.
+set "NEED_DEPS="
+if not exist "venv\.deps_ok" set "NEED_DEPS=1"
+if not defined NEED_DEPS (
+    "%VENVPY%" -c "import PySide6" >nul 2>&1
+    if errorlevel 1 set "NEED_DEPS=1"
+)
+if defined NEED_DEPS (
     echo  ==^> Installing dependencies... first run can take a few minutes.
     "%VENVPY%" -m pip install --upgrade pip --quiet
-    "%VENVPY%" -m pip install -r requirements.txt PySide6
+    "%VENVPY%" -m pip install -r requirements.txt
     if errorlevel 1 (
         echo.
         echo  [ERROR] Dependency install failed - scroll up for the pip error.
@@ -180,7 +189,27 @@ if defined PSD_GUI_SERVE (
     echo  ==^> Starting the psd.ai desktop app...
     echo      No browser or localhost page - psd.ai is this window.
     echo.
+    REM Belt-and-braces: if a pre-existing venv is missing the GUI binding,
+    REM install it right here instead of failing silently.
+    "%VENVPY%" -c "import PySide6" >nul 2>&1
+    if errorlevel 1 (
+        echo  [info] PySide6 ^(GUI^) not found - installing it now...
+        "%VENVPY%" -m pip install PySide6
+        if errorlevel 1 (
+            echo.
+            echo  [ERROR] Could not install PySide6 - check your internet connection.
+            echo          Then double-click run.bat again.
+            echo.
+            pause
+            exit /b 1
+        )
+        echo ok> "venv\.deps_ok"
+    )
     "%VENVPY%" psd_gui.py
+    if errorlevel 1 (
+        echo.
+        echo  [ERROR] psd.ai GUI closed with an error - see the messages above.
+    )
 )
 
 echo.
