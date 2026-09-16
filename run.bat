@@ -201,14 +201,32 @@ echo      Local models: app -^> "Local Models" ^(download / start / stop^).
 echo      Close the psd.ai window or tray icon to stop everything.
 echo.
 
-if defined PSD_GUI_CONSOLE (
-    "!VENVPY!" psd_gui.py
-) else if exist "!VENVPYW!" (
+REM  Launch mode:
+REM    - PSD_GUI_CONSOLE=1        -> run inside a console you can watch
+REM    - a previous crash log     -> console, so the error is visible now
+REM    - no proven good run yet   -> minimized console (first runs stay visible)
+REM    - .gui_ok exists           -> fully windowless (pythonw, no console)
+set "LAUNCH_MODE=windowless"
+if defined PSD_GUI_CONSOLE set "LAUNCH_MODE=console"
+if exist "%APP_DIR%\desktop_crash.log" (
+    echo  [NOTE] The previous desktop run crashed - details in:
+    echo         %APP_DIR%\desktop_crash.log
+    echo         Starting in a console window so you can watch it live.
+    set "LAUNCH_MODE=console"
+)
+if not exist "%APP_DIR%\.gui_ok" if not defined PSD_GUI_CONSOLE (
+    if not exist "%APP_DIR%\desktop_crash.log" set "LAUNCH_MODE=firstrun"
+)
+
+if "!LAUNCH_MODE!"=="windowless" (
     start "" "!VENVPYW!" "%APP_DIR%\psd_gui.py"
     goto :launched
-) else (
-    start "psd.ai" /min "!VENVPY!" psd_gui.py
 )
+if "!LAUNCH_MODE!"=="firstrun" (
+    start "psd.ai" /min "!VENVPY!" psd_gui.py
+    goto :launched
+)
+"!VENVPY!" psd_gui.py
 goto :eof
 
 :launched

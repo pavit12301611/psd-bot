@@ -12,6 +12,7 @@ import logging
 import os
 import sys
 import traceback
+from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, QTimer
@@ -34,6 +35,17 @@ from gui.widgets.dialogs import error_dialog
 logger = logging.getLogger("psd.gui.app")
 
 SINGLE_INSTANCE_KEY = "psd-ai-desktop-single-instance"
+
+# Written once a window is actually on screen: run.bat uses it to know the
+# desktop has proven it can start, and later launches may go console-less.
+STARTED_MARKER = Path(__file__).resolve().parents[1] / ".gui_ok"
+
+
+def _touch_started_marker() -> None:
+    try:
+        STARTED_MARKER.write_text("ok", encoding="utf-8")
+    except OSError:
+        pass
 
 
 class Splash(QDialog):
@@ -137,26 +149,52 @@ class DesktopApp:
     def ensure_single_instance(self) -> bool:
         self._server = QLocalServer(self.qapp)
         self._server.setSocketOptions(QLocalServer.WorldAccessOption)
-        if not self._server.listen(SINGLE_INSTANCE_KEY):
-            # Another instance already owns the name: ping it and exit.
-            from PySide6.QtNetwork import QLocalSocket
+        if self._server.listen(SINGLE_INSTANCE_KEY):
+            self._server.newConnection.connect(self._focus_existing)
+            return True
+        # Someone owns the name: ask them to show their window. A healthy
+        # instance answers "ack"; a windowless zombie does not, and then we
+        # take the lock over instead of exiting silently.
+        from PySide6.QtNetwork import QLocalSocket
 
-            socket = QLocalSocket(self.qapp)
-            socket.connectToServer(SINGLE_INSTANCE_KEY)
-            if socket.waitForConnected(1500):
-                socket.write(b"show")
-                socket.flush()
-                socket.waitForBytesWritten(1000)
-            socket.disconnectFromServer()
+        socket = QLocalSocket(self.qapp)
+        socket.connectToServer(SINGLE_INSTANCE_KEY)
+        healthy = False
+        if socket.waitForConnected(1500):
+            socket.write(b"show")
+            socket.flush()
+            socket.waitForBytesWritten(800)
+            healthy = socket.waitForReadyRead(2000) and bytes(socket.readAll()) == b"ack"
+        socket.disconnectFromServer()
+        if healthy:
             return False
-        self._server.newConnection.connect(self._focus_existing)
-        return True
+        QLocalServer.removeServer(SINGLE_INSTANCE_KEY)
+        if self._server.listen(SINGLE_INSTANCE_KEY):
+            self._server.newConnection.connect(self._focus_existing)
+            return True
+        return False
 
     def _focus_existing(self) -> None:
+        while self._server is not None and self._server.hasPendingConnections():
+            connection = self._server.nextPendingConnection()
+            if connection is None:
+                break
+            request = b""
+            if connection.waitForReadyRead(500):
+                request = bytes(connection.readAll())
+            if request == b"show":
+                connection.write(b"ack")
+                connection.flush()
+                connection.disconnectFromServer()
+                connection.deleteLater()
         if self.shell is not None:
             self.shell.show()
             self.shell.raise_()
             self.shell.activateWindow()
+        elif self.login is not None:
+            self.login.show()
+            self.login.raise_()
+            self.login.activateWindow()
 
     # ------------------------------------------------------------------ #
     def run(self) -> int:
@@ -243,6 +281,7 @@ class DesktopApp:
         self.login.logged_in.connect(lambda username: self._on_logged_in(username, theme))
         self.login.resize(760, 620)
         self.login.show()
+        _touch_started_marker()
 
     def _on_logged_in(self, username: str, theme: Theme) -> None:
         login, self.login = self.login, None
@@ -264,6 +303,7 @@ class DesktopApp:
         self.shell = MainWindow(username or self.api.auth_status().get("username") or "")
         self.shell.apply_theme(theme)
         self.shell.show()
+        _touch_started_marker()
         self.qapp.aboutToQuit.connect(self._shutdown)
 
     # ------------------------------------------------------------------ #

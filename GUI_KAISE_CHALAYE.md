@@ -70,10 +70,17 @@ lagte hain.
 
 ## Agar kuch gadbad ho
 
-- **Window khuli hi nahi:** `run.bat` wala console dekho — error likha hoga
-  (zyada tar Python ya pip install ka issue). Debug ke liye
-  `set PSD_GUI_CONSOLE=1` karke `run.bat` chalao, taaki app usi console me
-  chale aur log dikhe.
+- **Window khuli hi nahi / bat apne aap band ho gayi:** app console-less mode
+  me chalti hai, isliye crash chup sakta hai. Dekhne ke liye:
+  1. repo folder me `psd.ai\desktop_crash.log` file kholo — poora traceback
+     usme hota hai; ya
+  2. cmd kholo, repo folder me: `set PSD_GUI_CONSOLE=1` phir `run.bat` —
+     app console ke andar chalegi aur error screen par dikhega; ya
+  3. seedha: `cd psd.ai` phir `venv\Scripts\python.exe psd_gui.py`
+     (agar venv `%LOCALAPPDATA%\psd.ai` me bana ho to
+     `%LOCALAPPDATA%\psd.ai\venv\Scripts\python.exe psd_gui.py`).
+  Jo traceback dikhe wo mujhe bhej do. Crash ke baad agli baar `run.bat`
+  apne aap console mode me khulti hai taaki error chupe nahi.
 - **Login bhool gaye:** data folder `psd.ai/data/auth.json` me users hain;
   naya setup chahiye to wo file hata do (dhyan rahe: sirf auth reset hoga).
 - **Model jawab nahi de raha:** **Diagnostics** me live log dekho, ya
