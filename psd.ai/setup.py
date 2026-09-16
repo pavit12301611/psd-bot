@@ -94,6 +94,12 @@ def create_default_admin():
         print("  [skip] auth.json already exists")
         return "exists"
 
+    if os.getenv("PSD_AI_SKIP_ADMIN_CREATION", "").strip().lower() in ("1", "true", "yes"):
+        # Desktop first run: the GUI shows a "create your admin account" screen
+        # (POST /api/auth/setup), so no random console password is needed.
+        print("  [skip] admin creation deferred to the desktop app's first-run screen")
+        return "skipped"
+
     try:
         import bcrypt
         import json
