@@ -10,8 +10,10 @@ REM    1. find Python 3.11+
 REM    2. create a virtual environment      (first run only)
 REM    3. install all dependencies          (first run only)
 REM    4. run setup - creates admin account (first run only)
-REM    5. open http://localhost:7000 in your browser
-REM    6. start the server
+REM    5. download + run the best local Llama for this PC
+REM       (first run only - a few GB, in a second window)
+REM    6. open http://localhost:7000 in your browser
+REM    7. start the server
 REM
 REM  Safe to re-run - steps already done are skipped, so later
 REM  launches start straight away. Keep this next to the psd.ai
@@ -20,6 +22,11 @@ REM ==================================================================
 
 set "APP_DIR=%~dp0psd.ai"
 set "PORT=7000"
+REM Port the local Llama server listens on, and how long to wait for a
+REM first-run model download before opening the app anyway. Override by
+REM setting these in the environment before double-clicking run.bat.
+if not defined LLAMA_PORT set "LLAMA_PORT=8080"
+if not defined MODEL_WAIT_SECONDS set "MODEL_WAIT_SECONDS=2400"
 
 if not exist "%APP_DIR%\app.py" (
     echo.
@@ -124,7 +131,29 @@ if errorlevel 1 (
 )
 
 REM ----------------------------------------------------------------
-REM  5. Open the app in the browser a few seconds after the server
+REM  5. Local AI model (first run only downloads a few GB)
+REM
+REM     Picks the best Llama for THIS PC (RAM / GPU), downloads the
+REM     llama.cpp server + the model weights, serves it on port
+REM     %LLAMA_PORT% and registers it as the default chat model.
+REM
+REM     Set PSD_NO_LOCAL_MODEL=1 to skip this and bring your own model.
+REM ----------------------------------------------------------------
+if not defined PSD_NO_LOCAL_MODEL (
+    echo.
+    echo  ==^> Starting the local Llama model in a second window...
+    echo      First run downloads llama.cpp + the model weights ^(a few GB^).
+    echo      Keep that window open while you use psd.ai - closing it stops the model.
+    if exist "runtime\local_model_failed.txt" del /q "runtime\local_model_failed.txt"
+    start "psd.ai - local Llama model" cmd /k ""%VENVPY%" scripts\local_llama.py --port %LLAMA_PORT% --foreground"
+    "%VENVPY%" scripts\local_llama.py --wait-ready %MODEL_WAIT_SECONDS%
+) else (
+    echo.
+    echo  ==^> PSD_NO_LOCAL_MODEL is set - skipping the local model download.
+)
+
+REM ----------------------------------------------------------------
+REM  6. Open the app in the browser a few seconds after the server
 REM     starts, then launch the server in this window
 REM ----------------------------------------------------------------
 echo.

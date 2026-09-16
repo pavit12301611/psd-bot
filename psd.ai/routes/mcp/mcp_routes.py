@@ -629,7 +629,7 @@ def _oauth_authorize_page(
     redirect_uri = html.escape(redirect_uri, quote=True)
     return f"""<!DOCTYPE html>
 <html><head>
-<meta charset="UTF-8"><title>Authorize — Odysseus</title>
+<meta charset="UTF-8"><title>Authorize — psd.ai</title>
 <style>
   body {{ font-family: 'Fira Code', monospace; background: #0f0f0f; color: #e0e0e0;
     display: flex; justify-content: center; align-items: center; min-height: 100vh; }}
