@@ -100,6 +100,47 @@ def test_remote_windows_probe_uses_encoded_command(monkeypatch):
     assert '-Command "' not in calls[0]
 
 
+def test_detect_windows_reports_physical_cores_separately(monkeypatch):
+    """scripts/local_llama.py needs the physical core count to work out how
+    many P-cores a hybrid Intel CPU has; Win32_Processor.NumberOfLogicalProcessors
+    alone cannot tell it that."""
+    from services.hwfit import hardware
+
+    monkeypatch.setattr(hardware, "_remote_host", None)
+    monkeypatch.setattr(hardware, "_powershell_exe", lambda: "powershell.exe")
+    monkeypatch.setattr(
+        hardware, "_run",
+        lambda cmd: ('{"ram_gb":15.7,"avail_gb":11.0,'
+                     '"cpu_name":"13th Gen Intel(R) Core(TM) i7-13620H",'
+                     '"cpu_cores":16.0,"cpu_phys_cores":10.0,"arch":64,'
+                     '"cpu_arch":"AMD64","gpu_name":"Intel(R) UHD Graphics",'
+                     '"gpu_vram_gb":0.1,"gpu_count":1.0,"gpu_backend":"cpu_x86"}'),
+    )
+    result = hardware._detect_windows()
+    assert result["cpu_cores"] == 16
+    assert result["cpu_physical_cores"] == 10
+    # ...and that gap is what the local Llama picker turns into a thread count.
+    from scripts.local_llama import plan_threads
+    assert plan_threads(result) == 6
+
+
+def test_detect_windows_survives_a_probe_that_omits_physical_cores(monkeypatch):
+    """Older PowerShell or a failed WMI query: degrade to 0, never crash."""
+    from services.hwfit import hardware
+
+    monkeypatch.setattr(hardware, "_remote_host", None)
+    monkeypatch.setattr(hardware, "_powershell_exe", lambda: "powershell.exe")
+    monkeypatch.setattr(
+        hardware, "_run",
+        lambda cmd: '{"ram_gb":16,"avail_gb":8,"cpu_name":"Old CPU","cpu_cores":4,"arch":64}',
+    )
+    result = hardware._detect_windows()
+    assert result["cpu_physical_cores"] == 0
+    # The picker falls back to the logical count rather than to 0 threads.
+    from scripts.local_llama import plan_threads
+    assert plan_threads(result) == 4
+
+
 def test_probe_remote_platform_detects_windows(monkeypatch):
     from services.hwfit import hardware
 

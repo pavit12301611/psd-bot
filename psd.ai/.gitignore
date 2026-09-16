@@ -26,6 +26,10 @@ secrets.env.*
 
 # Data — all user data stays local
 data/
+
+# Local model runtime — llama.cpp binaries + GGUF weights downloaded by
+# scripts/local_llama.py (run.bat). Multi-GB and machine-specific.
+runtime/
 !services/hwfit/data/
 !services/hwfit/data/hf_models.json
 logs/

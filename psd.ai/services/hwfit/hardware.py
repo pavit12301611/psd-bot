@@ -582,6 +582,7 @@ def _detect_windows():
         $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
         $r.cpu_name = $cpu.Name
         $r.cpu_cores = (Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum
+        $r.cpu_phys_cores = (Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfCores -Sum).Sum
         $r.arch = $cpu.AddressWidth
         $r.cpu_arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
         # GPU detection via nvidia-smi (fastest) or WMI fallback
@@ -653,6 +654,10 @@ def _detect_windows():
             "total_ram_gb": d.get("ram_gb", 0),
             "available_ram_gb": d.get("avail_gb", 0),
             "cpu_cores": _as_int(d.get("cpu_cores"), 1),
+            # Physical cores, distinct from the logical count above. On hybrid
+            # Intel (12th gen+) the two differ and the gap is what tells a
+            # caller how many P-cores exist — see scripts/local_llama.py.
+            "cpu_physical_cores": _as_int(d.get("cpu_phys_cores"), 0),
             "cpu_name": _cpu_name,
             "cpu_arch": _canonical_cpu_arch(d.get("cpu_arch")),
             "has_gpu": bool(d.get("gpu_name")),
