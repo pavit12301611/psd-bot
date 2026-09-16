@@ -1,11 +1,11 @@
 @echo off
 setlocal
-title Update Odysseus Docker Deployment
+title Update psd.ai Docker Deployment
 
 pushd "%~dp0" >nul
 
 echo =========================================
-echo Updating Odysseus Docker deployment
+echo Updating psd.ai Docker deployment
 echo =========================================
 echo.
 

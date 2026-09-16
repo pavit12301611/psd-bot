@@ -1,13 +1,13 @@
-// static/sw.js — Odysseus PWA Service Worker
+// static/sw.js — psd.ai PWA Service Worker
 // Strategy:
 //   - HTML (navigation): stale-while-revalidate. Instant open from cache,
 //     background refresh so the next open has latest HTML.
-//   - JS/CSS (/static/*.js|.css): network-first, cache fallback for offline.
-//     (So code/style edits show up on a normal reload, no manual cache clear.)
+//   - JS/CSS (/static/*.js|.css): stale-while-revalidate. Cached modules
+//     render immediately; the network refreshes them in the background.
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v381-psd-ai-branding';
+const CACHE_NAME = 'psd_ai-v382-fast-assets';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -207,17 +207,20 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // JS/CSS: network-first — always try the network so code/style edits show up
-  // on a normal reload; fall back to cache only when offline.
+  // JS/CSS: stale-while-revalidate. The cached module/style is returned
+  // immediately when available, while a background request updates it for the
+  // next navigation. A first visit still waits for the network, and an offline
+  // visit falls back to the last known copy.
   if (url.pathname.startsWith('/static/') && /\.(js|css)(\?|$)/.test(url.pathname + url.search)) {
     e.respondWith(
-      fetch(e.request).then(res => {
-        if (res && res.ok) {
-          const copy = res.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(e.request, copy));
-        }
-        return res;
-      }).catch(() => caches.match(e.request))
+      caches.open(CACHE_NAME).then(async cache => {
+        const cached = await cache.match(e.request);
+        const refreshing = fetch(e.request).then(res => {
+          if (res && res.ok) cache.put(e.request, res.clone());
+          return res;
+        }).catch(() => cached);
+        return cached || refreshing;
+      })
     );
     return;
   }

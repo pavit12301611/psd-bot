@@ -109,7 +109,7 @@ try:
     _log_file = os.path.join(_log_dir, "app.log")
 
     # RotatingFileHandler is not multi-process safe (e.g. if uvicorn is run with --workers N).
-    # Odysseus is single-process by convention, so this is acceptable, but be aware that
+    # psd.ai is single-process by convention, so this is acceptable, but be aware that
     # concurrent log rotation issues can arise if multiple workers are configured.
     _file_h = logging.handlers.RotatingFileHandler(
         _log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
@@ -145,8 +145,8 @@ app.add_middleware(
         "Content-Type",
         "X-API-Key",
         "X-Auth-Token",
-        "X-Odysseus-Internal-Token",
-        "X-Odysseus-Owner",
+        "X-psd.ai-Internal-Token",
+        "X-psd.ai-Owner",
         "X-Requested-With",
         "X-TZ-Offset",
     ],
@@ -233,7 +233,7 @@ class _SlowRequestLogMiddleware(_BaseHTTPMiddleware):
         finally:
             elapsed = time.perf_counter() - start
             try:
-                threshold = float(os.getenv("ODYSSEUS_SLOW_REQUEST_LOG_SECONDS", "0.75") or "0.75")
+                threshold = float(os.getenv("PSD_AI_SLOW_REQUEST_LOG_SECONDS", "0.75") or "0.75")
             except Exception:
                 threshold = 0.75
             if elapsed >= threshold:
@@ -350,7 +350,7 @@ if AUTH_ENABLED:
         forwarding headers. A bare ``client.host in ('127.0.0.1','::1')`` check is
         unsafe behind a Cloudflare tunnel / reverse proxy: those connect from
         loopback, so a remote visitor would otherwise inherit local trust and
-        slip past LOCALHOST_BYPASS or spoof the internal-tool path. Odysseus's own
+        slip past LOCALHOST_BYPASS or spoof the internal-tool path. psd.ai's own
         in-process agent loopback calls carry none of these headers, so they still
         qualify."""
         host = request.client.host if request.client else None
@@ -384,10 +384,10 @@ if AUTH_ENABLED:
                 _hdr = request.headers.get(INTERNAL_TOOL_HEADER)
                 if _hdr and secrets.compare_digest(_hdr, _ITT) and _is_trusted_loopback(request):
                     # Impersonation: when the agent's loopback call sets
-                    # X-Odysseus-Owner, attribute the request to that user only
+                    # X-psd.ai-Owner, attribute the request to that user only
                     # if they exist. Authorization checks remain separate; this
                     # is just owner attribution for notes/calendar/etc.
-                    _impersonate = (request.headers.get("X-Odysseus-Owner") or "").strip()
+                    _impersonate = (request.headers.get("X-psd.ai-Owner") or "").strip()
                     _auth_mgr = getattr(request.app.state, "auth_manager", None) or auth_manager
                     if _impersonate and _impersonate in getattr(_auth_mgr, "users", {}):
                         request.state.current_user = _impersonate
@@ -492,18 +492,28 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 
 
 class _RevalidatingStatic(StaticFiles):
-    """Serve static assets normally, but force the browser to REVALIDATE
-    source files (.js/.css/.html) on every load instead of serving a stale
-    copy from disk cache. The app ships raw ES modules with no build step or
-    versioned URLs, so browsers were caching modules across deploys — a code
-    change wouldn't appear without a manual hard-refresh. `no-cache` keeps the
-    cached bytes but requires a conditional request; unchanged files still
-    return a cheap 304 (ETag/Last-Modified are preserved)."""
+    """Serve static assets with cache headers that match their update model.
+
+    HTML remains revalidated so deploys are visible immediately. JavaScript and
+    CSS use a short stale-while-revalidate window: repeat visits can render from
+    the browser/service-worker cache without waiting on a round trip, while a
+    background refresh picks up edits. Fonts, images, and vendored libraries
+    are immutable app assets and can stay cached for a year. This keeps the
+    first visit compressed by :class:`GZipMiddleware` and makes later visits
+    effectively local without requiring a frontend build step.
+    """
 
     async def get_response(self, path, scope):
         resp = await super().get_response(path, scope)
-        if path.endswith((".js", ".css", ".html")):
+        lower_path = path.lower()
+        if lower_path.endswith(".html"):
             resp.headers["Cache-Control"] = "no-cache"
+        elif lower_path.endswith((".js", ".css")):
+            resp.headers["Cache-Control"] = (
+                "public, max-age=300, stale-while-revalidate=86400"
+            )
+        else:
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return resp
 
 
@@ -1084,7 +1094,7 @@ async def _startup_event():
     # Startup warmups are opt-in. They make later requests a little warmer, but
     # they also compete with the first seconds of real UI use on slow or busy
     # machines. Default to clear/idle startup and let requests warm what they use.
-    _startup_warmups_enabled = str(os.getenv("ODYSSEUS_STARTUP_WARMUPS", "")).lower() in {"1", "true", "yes", "on"}
+    _startup_warmups_enabled = str(os.getenv("PSD_AI_STARTUP_WARMUPS", "")).lower() in {"1", "true", "yes", "on"}
     if _startup_warmups_enabled:
         async def _warmup_tool_index():
             try:
@@ -1117,12 +1127,12 @@ async def _startup_event():
 
         _startup_tasks.append(asyncio.create_task(_warmup_endpoints()))
     else:
-        logger.info("Startup warmups disabled (set ODYSSEUS_STARTUP_WARMUPS=1 to enable)")
+        logger.info("Startup warmups disabled (set PSD_AI_STARTUP_WARMUPS=1 to enable)")
 
     # Keep-alive is opt-in. The ping path performs model discovery, and when
     # stale LAN endpoints are configured it can add periodic backend pressure
     # that delays unrelated UI requests such as Notes/Documents.
-    _keepalive_enabled = str(os.getenv("ODYSSEUS_MODEL_KEEPALIVE", "")).lower() in {"1", "true", "yes", "on"}
+    _keepalive_enabled = str(os.getenv("PSD_AI_MODEL_KEEPALIVE", "")).lower() in {"1", "true", "yes", "on"}
     if _keepalive_enabled:
         async def _keepalive_loop():
             while True:
@@ -1206,13 +1216,13 @@ async def _startup_event():
 
     # Start scheduled task runner — skip when running under a cron-driven
     # deployment where an external worker drives task firing. Mirrors
-    # `ODYSSEUS_INPROCESS_POLLERS` from the email pollers.
-    _tasks_inprocess = os.environ.get("ODYSSEUS_INPROCESS_TASKS", "1").strip().lower()
+    # `PSD_AI_INPROCESS_POLLERS` from the email pollers.
+    _tasks_inprocess = os.environ.get("PSD_AI_INPROCESS_TASKS", "1").strip().lower()
     if _tasks_inprocess not in ("0", "false", "no", "off", ""):
         await task_scheduler.start()
     else:
         logger.info(
-            "In-process task scheduler disabled (ODYSSEUS_INPROCESS_TASKS=0); "
+            "In-process task scheduler disabled (PSD_AI_INPROCESS_TASKS=0); "
             "drive task firing externally (e.g. cron)."
         )
     # Periodic null-owner sweep — re-runs the legacy-owner assignment hourly

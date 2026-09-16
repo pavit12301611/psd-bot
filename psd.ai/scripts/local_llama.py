@@ -4,11 +4,11 @@
 One command that makes the app work offline out of the box:
 
   1. detect this PC's hardware (RAM / CPU / GPU)
-  2. pick the best Llama that actually fits on it
+  2. choose the strongest group of 3–5 models that fits together
   3. download llama.cpp (prebuilt llama-server) — first run only
-  4. download the GGUF weights (resumable) — first run only
-  5. start llama-server on 127.0.0.1:<port> and wait until it answers
-  6. register it in the app database and make it the default chat model
+  4. download the GGUF weights concurrently (resumable) — first run only
+  5. start one llama-server per model on consecutive local ports
+  6. register every endpoint in the app and make the first one the default
 
 run.bat calls this before launching the server, so a fresh Windows install
 ends up with a working local model instead of an empty model picker.
@@ -39,7 +39,9 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from itertools import combinations
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -104,6 +106,14 @@ MODEL_SPECS: Tuple[ModelSpec, ...] = (
         max_context=131072,
     ),
     ModelSpec(
+        id="qwen-2.5-1.5b",
+        label="Qwen 2.5 1.5B Instruct",
+        family="qwen2.5",
+        params_b=1.5,
+        repos=("Qwen/Qwen2.5-1.5B-Instruct-GGUF", "bartowski/Qwen2.5-1.5B-Instruct-GGUF"),
+        max_context=32768,
+    ),
+    ModelSpec(
         id="llama-3.2-1b",
         label="Llama 3.2 1B Instruct",
         family="3.2",
@@ -111,7 +121,39 @@ MODEL_SPECS: Tuple[ModelSpec, ...] = (
         repos=("unsloth/Llama-3.2-1B-Instruct-GGUF", "bartowski/Llama-3.2-1B-Instruct-GGUF"),
         max_context=131072,
     ),
+    ModelSpec(
+        id="qwen-2.5-0.5b",
+        label="Qwen 2.5 0.5B Instruct",
+        family="qwen2.5",
+        params_b=0.5,
+        repos=("Qwen/Qwen2.5-0.5B-Instruct-GGUF", "bartowski/Qwen2.5-0.5B-Instruct-GGUF"),
+        max_context=32768,
+    ),
+    ModelSpec(
+        id="smollm2-360m",
+        label="SmolLM2 360M Instruct",
+        family="smollm2",
+        params_b=0.36,
+        repos=("HuggingFaceTB/SmolLM2-360M-Instruct-GGUF",),
+        max_context=8192,
+    ),
+    ModelSpec(
+        id="smollm2-135m",
+        label="SmolLM2 135M Instruct",
+        family="smollm2",
+        params_b=0.135,
+        repos=("HuggingFaceTB/SmolLM2-135M-Instruct-GGUF",),
+        max_context=8192,
+    ),
 )
+
+# A fresh install intentionally starts a small local model group instead of a
+# single endpoint. The planner may choose fewer than five when the hardware
+# cannot hold them, but it never deliberately provisions fewer than three.
+MIN_GROUP_MODELS = 3
+MAX_GROUP_MODELS = 5
+GROUP_SERVER_HEADROOM_GB = 0.15
+GROUP_STATE_FILE = RUNTIME_DIR / "local_model_group.json"
 
 # Quantisation quality, best first. Used to refuse "best model, awful quant"
 # picks: a 70B at IQ1 is worse in practice than an 8B at Q4_K_M.
@@ -281,6 +323,23 @@ class Plan:
     note: str = ""
 
 
+@dataclass
+class GroupPlan:
+    """A set of local servers that can stay resident at the same time."""
+
+    plans: Tuple[Plan, ...]
+    budget_gb: float
+    fits: bool
+    note: str = ""
+
+    @property
+    def total_gb(self) -> float:
+        return sum(
+            p.file.size_gb + plan_context_gb(p.context, p.spec.params_b) + GROUP_SERVER_HEADROOM_GB
+            for p in self.plans
+        )
+
+
 CONTEXT_LADDER: Tuple[int, ...] = (16384, 8192, 4096, 2048)
 # A 2048-token window truncates most real conversations. If a model can only
 # run that small, a smaller model at a proper context is the better answer.
@@ -398,6 +457,209 @@ def plan_model(
             note="nothing fit the memory budget - using the smallest Llama available, expect slow replies",
         )
     return None
+
+
+def group_memory_budget_gb(system: Dict[str, Any]) -> float:
+    """Total memory reserved for a resident model group.
+
+    ``memory_budget_gb`` is intentionally conservative for one large model.
+    A group has several small models, so use the available-memory reading and
+    leave the OS/application a fixed safety margin. GPU memory remains the
+    hard limit for discrete cards; unified-memory Macs use the shared pool.
+    """
+    unified = bool(system.get("unified_memory"))
+    if has_usable_gpu(system) and not unified:
+        try:
+            vram = float(system.get("gpu_vram_gb") or 0.0)
+        except (TypeError, ValueError):
+            vram = 0.0
+        return max(1.5, vram - 1.25)
+
+    try:
+        total = float(system.get("total_ram_gb") or 0.0)
+    except (TypeError, ValueError):
+        total = 0.0
+    try:
+        available = float(system.get("available_ram_gb") or 0.0)
+    except (TypeError, ValueError):
+        available = 0.0
+    if total <= 0:
+        return max(1.5, memory_budget_gb(system))
+    # Never consume more than 62% of physical RAM or 88% of currently free
+    # RAM. The lower value wins, which behaves well both after boot and on a
+    # machine where other applications are already open.
+    physical_cap = total * 0.62
+    available_cap = available * 0.88 if available > 0 else physical_cap
+    return max(1.5, min(physical_cap, available_cap))
+
+
+def _group_variants(
+    spec: ModelSpec,
+    files: Sequence[GGUFFile],
+    budget_gb: float,
+    floor_quant: str,
+) -> List[Plan]:
+    """Return affordable file/context choices for one member of a group."""
+    floor_rank = _QUANT_RANK_INDEX.get(floor_quant.upper(), MIN_QUANT_RANK)
+    variants: List[Plan] = []
+    for f in files:
+        quant = quant_of(f.filename) or ""
+        rank = _QUANT_RANK_INDEX.get(quant, len(QUANT_RANK))
+        if not (BEST_QUANT_RANK <= rank <= floor_rank):
+            continue
+        for context in CONTEXT_LADDER:
+            if context > spec.max_context:
+                continue
+            cost = f.size_gb + plan_context_gb(context, spec.params_b) + GROUP_SERVER_HEADROOM_GB
+            if cost > budget_gb:
+                continue
+            variants.append(Plan(
+                spec=spec,
+                file=f,
+                quant=quant,
+                context=context,
+                budget_gb=budget_gb,
+                fits=True,
+            ))
+
+    # A file can occur in multiple HF mirrors. Keep one choice per file/context
+    # and rank the variants from strongest to smallest so the bounded search
+    # below remains fast even for large HF repositories.
+    unique: Dict[Tuple[str, int], Plan] = {}
+    for plan in variants:
+        unique[(plan.file.repo + ":" + plan.file.path, plan.context)] = plan
+
+    def score(plan: Plan) -> Tuple[float, float, int]:
+        rank = _QUANT_RANK_INDEX.get(plan.quant, len(QUANT_RANK))
+        return (
+            plan.spec.params_b * 100.0,
+            plan.context / 1024.0,
+            -rank,
+        )
+
+    return sorted(unique.values(), key=score, reverse=True)
+
+
+def _best_group_variants(
+    specs: Sequence[ModelSpec],
+    variants_by_spec: Dict[str, List[Plan]],
+    budget_gb: float,
+) -> Optional[Tuple[Plan, ...]]:
+    """Bounded knapsack search for the strongest fitting choice per spec."""
+    # State: (total cost, quality score, selected plans). Keeping a few hundred
+    # states is enough for the seven-model catalogue and avoids a combinatorial
+    # explosion when a repo exposes dozens of quantisations.
+    states: List[Tuple[float, float, Tuple[Plan, ...]]] = [(0.0, 0.0, ())]
+    for spec in specs:
+        variants = variants_by_spec.get(spec.id) or []
+        if not variants:
+            return None
+        expanded: List[Tuple[float, float, Tuple[Plan, ...]]] = []
+        for used, quality, selected in states:
+            for plan in variants:
+                cost = plan.file.size_gb + plan_context_gb(plan.context, plan.spec.params_b) + GROUP_SERVER_HEADROOM_GB
+                new_used = used + cost
+                if new_used > budget_gb + 1e-6:
+                    continue
+                rank = _QUANT_RANK_INDEX.get(plan.quant, len(QUANT_RANK))
+                new_quality = quality + plan.spec.params_b * 100.0 + plan.context / 1024.0 - rank * 0.01
+                expanded.append((new_used, new_quality, selected + (plan,)))
+        if not expanded:
+            return None
+        # Keep the best state for each decile of memory usage, then cap the
+        # beam. This preserves cheap combinations needed to fit later models.
+        buckets: Dict[int, Tuple[float, float, Tuple[Plan, ...]]] = {}
+        for state in expanded:
+            bucket = int(state[0] * 10)
+            previous = buckets.get(bucket)
+            if previous is None or state[1] > previous[1]:
+                buckets[bucket] = state
+        states = sorted(buckets.values(), key=lambda item: (item[1], -item[0]), reverse=True)[:512]
+    return max(states, key=lambda item: item[1])[2] if states else None
+
+
+def plan_model_group(
+    system: Dict[str, Any],
+    files_by_repo: Dict[str, List[GGUFFile]],
+    prefer_id: str = "",
+    min_quant: str = "",
+    min_models: int = MIN_GROUP_MODELS,
+    max_models: int = MAX_GROUP_MODELS,
+) -> Optional[GroupPlan]:
+    """Choose three to five models that fit in memory together.
+
+    The normal selection still prefers quality, but the group size is decided
+    first: try five models, then four, then the required minimum of three. A
+    small model is therefore added instead of allowing one oversized model to
+    consume the entire machine. Each returned plan has its own port/server.
+    """
+    min_models = max(MIN_GROUP_MODELS, min(MAX_GROUP_MODELS, int(min_models)))
+    max_models = max(min_models, min(MAX_GROUP_MODELS, int(max_models)))
+    budget = group_memory_budget_gb(system)
+    specs = MODEL_SPECS
+
+    def pool_for(spec: ModelSpec) -> List[GGUFFile]:
+        files: List[GGUFFile] = []
+        for repo in spec.repos:
+            files.extend(files_by_repo.get(repo, []))
+        return files
+
+    floors = [min_quant.upper()] if min_quant else list(QUANT_FLOORS)
+    for floor in floors:
+        variants_by_spec = {
+            spec.id: _group_variants(spec, pool_for(spec), budget, floor)
+            for spec in specs
+        }
+        available = [spec for spec in specs if variants_by_spec.get(spec.id)]
+        if len(available) < min_models:
+            continue
+
+        for count in range(min(max_models, len(available)), min_models - 1, -1):
+            best: Optional[Tuple[float, Tuple[Plan, ...]]] = None
+            for selected_specs in combinations(available, count):
+                if prefer_id and not any(spec.id == prefer_id.lower() for spec in selected_specs):
+                    continue
+                selected = _best_group_variants(selected_specs, variants_by_spec, budget)
+                if selected is None:
+                    continue
+                quality = sum(p.spec.params_b * 100.0 + p.context / 1024.0 for p in selected)
+                if best is None or quality > best[0]:
+                    best = (quality, selected)
+            if best is not None:
+                return GroupPlan(
+                    plans=best[1],
+                    budget_gb=round(budget, 2),
+                    fits=True,
+                    note=f"{len(best[1])} resident models selected for this machine",
+                )
+
+    # Last-resort path: still return three downloadable models, using the
+    # smallest 2048-context variants if that is the only possible group. This
+    # keeps the user-facing contract at three; the warning makes an unusual
+    # low-memory setup explicit rather than failing after one download.
+    floor = floors[-1]
+    variants_by_spec = {
+        spec.id: _group_variants(spec, pool_for(spec), float("inf"), floor)
+        for spec in specs
+    }
+    available = [spec for spec in specs if variants_by_spec.get(spec.id)]
+    if len(available) < min_models:
+        return None
+    cheapest: List[Plan] = []
+    for spec in sorted(available, key=lambda item: item.params_b):
+        choices = variants_by_spec[spec.id]
+        cheapest.append(min(
+            choices,
+            key=lambda p: p.file.size_gb + plan_context_gb(p.context, p.spec.params_b),
+        ))
+        if len(cheapest) >= min_models:
+            break
+    return GroupPlan(
+        plans=tuple(cheapest[:max_models]),
+        budget_gb=round(budget, 2),
+        fits=False,
+        note="three smallest models selected; total memory is above the conservative budget",
+    )
 
 
 # ── GPU / launch flags (pure) ────────────────────────────────────────────────
@@ -815,6 +1077,12 @@ def stop_server(proc: Optional[subprocess.Popen]) -> None:
             pass
 
 
+def stop_servers(processes: Iterable[Optional[subprocess.Popen]]) -> None:
+    """Stop every member of a local model group, best-effort."""
+    for proc in reversed(list(processes)):
+        stop_server(proc)
+
+
 # ── App registration ─────────────────────────────────────────────────────────
 ENDPOINT_NAME = "psd.ai Local Llama"
 
@@ -831,7 +1099,7 @@ def register_endpoint(base_url: str, model_id: str, plan: Plan) -> str:
         if row is None:
             row = ModelEndpoint(id=endpoint_id)
             db.add(row)
-        row.name = ENDPOINT_NAME
+        row.name = f"{ENDPOINT_NAME} · {plan.spec.label}"
         row.base_url = base_url
         row.is_enabled = True
         row.model_type = "llm"
@@ -1035,6 +1303,178 @@ def prepare_local_llama(
     return {"ok": True, "proc": proc, **state}
 
 
+def prepare_local_llama_group(
+    port: int = DEFAULT_PORT,
+    prefer_id: str = "",
+    host: str = "127.0.0.1",
+    skip_download: bool = False,
+    threads: int = 0,
+    fetch_files=list_repo_files,
+    downloader=download_file,
+    installer=install_llama_cpp,
+    health_timeout: float = 900.0,
+    set_default: bool = True,
+    system: Optional[Dict[str, Any]] = None,
+    min_models: int = MIN_GROUP_MODELS,
+    max_models: int = MAX_GROUP_MODELS,
+) -> Dict[str, Any]:
+    """Download and run a hardware-fit group of three to five models.
+
+    llama-server is intentionally launched once per model on consecutive ports
+    (the base port is the first model). Weight downloads run concurrently, so a
+    first install does not wait for five multi-GB files one after another.
+    """
+    min_models = max(MIN_GROUP_MODELS, min(MAX_GROUP_MODELS, int(min_models)))
+    max_models = max(min_models, min(MAX_GROUP_MODELS, int(max_models)))
+    system = system if system is not None else detect_hardware()
+    log("")
+    log(f"  Hardware: {system.get('cpu_name') or 'unknown CPU'}, "
+        f"{system.get('total_ram_gb') or '?'} GB RAM, "
+        f"{system.get('gpu_name') or 'no GPU'}")
+    budget = group_memory_budget_gb(system)
+    log(f"  Memory budget for the model group: {budget:.1f} GB")
+
+    if skip_download:
+        files_by_repo = _files_from_disk()
+    else:
+        files_by_repo: Dict[str, List[GGUFFile]] = {}
+        for spec in MODEL_SPECS:
+            for repo in spec.repos:
+                if repo in files_by_repo:
+                    continue
+                try:
+                    files_by_repo[repo] = candidate_files(repo, fetch_files(repo))
+                except Exception as exc:
+                    log(f"  [warn] could not list {repo}: {exc}")
+                    files_by_repo[repo] = []
+
+    group = plan_model_group(
+        system,
+        files_by_repo,
+        prefer_id=prefer_id,
+        min_models=min_models,
+        max_models=max_models,
+    )
+    if group is None or len(group.plans) < min_models:
+        raise RuntimeError(
+            f"could not find {min_models} downloadable models for this computer"
+        )
+
+    log(f"  Model group  : {len(group.plans)} models")
+    for index, plan in enumerate(group.plans, 1):
+        log(f"    {index}. {plan.spec.label} ({plan.quant}, {plan.file.size_gb:.2f} GB, ctx {plan.context})")
+    if group.note:
+        log(f"  Group note   : {group.note}")
+
+    exe, backends = installer(system)
+    threads = threads or plan_threads(system)
+    entries: List[Tuple[Plan, Path]] = []
+    for plan in group.plans:
+        model_path = MODELS_DIR / plan.file.repo.replace("/", "__") / plan.file.filename
+        entries.append((plan, model_path))
+
+    def _download_one(item: Tuple[Plan, Path]) -> Path:
+        plan, model_path = item
+        if model_path.exists() and model_path.stat().st_size == plan.file.size:
+            return model_path
+        if skip_download:
+            raise RuntimeError(f"model file missing and downloads are disabled: {model_path}")
+        log(f"  ==> Downloading {plan.spec.label} ({plan.file.size_gb:.2f} GB)...")
+        url = f"{HF_ORIGIN}/{plan.file.repo}/resolve/main/{plan.file.path}"
+        return downloader(url, model_path, plan.file.size, label=plan.file.filename)
+
+    # Downloading independent GGUF files concurrently makes a first run much
+    # faster on a connection that can sustain multiple streams. Limit workers
+    # to three so the launcher does not overwhelm a laptop or HF mirror.
+    with ThreadPoolExecutor(max_workers=min(3, len(entries))) as pool:
+        futures = {pool.submit(_download_one, item): item for item in entries}
+        for future in as_completed(futures):
+            future.result()
+
+    processes: List[subprocess.Popen] = []
+    states: List[Dict[str, Any]] = []
+    pending: List[Tuple[Plan, Path, int, int, subprocess.Popen, Any]] = []
+
+    for index, (plan, model_path) in enumerate(entries):
+        model_port = port + index
+        base_url = f"http://{host}:{model_port}/v1"
+        alias = f"psd-{plan.spec.id}"
+        gpu_layers = plan_gpu_layers(system, plan)
+        if gpu_layers and not any(b in backends for b in ("vulkan", "cuda", "metal")):
+            gpu_layers = 0
+        existing = _health_and_model(f"http://{host}:{model_port}", timeout=3.0)
+        if existing:
+            log(f"  ==> {plan.spec.label} already running on port {model_port} — reusing it.")
+            endpoint_id = register_endpoint(base_url, existing, plan)
+            became_default = set_default_model(endpoint_id, existing) if set_default and not states else False
+            states.append({
+                "model_id": existing, "alias": alias, "spec_id": plan.spec.id,
+                "label": plan.spec.label, "quant": plan.quant, "repo": plan.file.repo,
+                "file": str(model_path), "file_size_gb": round(plan.file.size_gb, 2),
+                "endpoint_id": endpoint_id, "base_url": base_url, "port": model_port,
+                "context": plan.context, "gpu_layers": gpu_layers, "backends": backends,
+                "pid": None, "reused": True, "became_default": became_default,
+            })
+            continue
+        if port_in_use(model_port, host):
+            log(f"  [warn] port {model_port} is busy; skipping {plan.spec.label}")
+            continue
+        cmd = build_server_command(
+            exe, model_path, alias, model_port, plan.context, gpu_layers, threads,
+            host=host, parallel=1,
+        )
+        log(f"  ==> Starting {plan.spec.label} on port {model_port}...")
+        proc, log_fh = start_server(cmd)
+        processes.append(proc)
+        pending.append((plan, model_path, model_port, gpu_layers, proc, log_fh))
+
+    for plan, model_path, model_port, gpu_layers, proc, log_fh in pending:
+        base_url = f"http://{host}:{model_port}"
+        try:
+            model_id = wait_until_healthy(base_url, proc, timeout=health_timeout)
+            endpoint_id = register_endpoint(f"{base_url}/v1", model_id, plan)
+            became_default = set_default_model(endpoint_id, model_id) if set_default and not states else False
+            states.append({
+                "model_id": model_id, "alias": f"psd-{plan.spec.id}", "spec_id": plan.spec.id,
+                "label": plan.spec.label, "quant": plan.quant, "repo": plan.file.repo,
+                "file": str(model_path), "file_size_gb": round(plan.file.size_gb, 2),
+                "endpoint_id": endpoint_id, "base_url": f"{base_url}/v1", "port": model_port,
+                "context": plan.context, "gpu_layers": gpu_layers, "backends": backends,
+                "pid": proc.pid, "became_default": became_default,
+            })
+            log(f"  ==> {plan.spec.label} ready at {base_url}/v1")
+        except Exception as exc:
+            log(f"  [warn] {plan.spec.label} failed to start: {exc}")
+            stop_server(proc)
+        finally:
+            if log_fh:
+                log_fh.close()
+
+    if len(states) < min_models:
+        stop_servers(processes)
+        raise RuntimeError(
+            f"only {len(states)} of the required {min_models} local models became ready"
+        )
+
+    payload = {
+        "mode": "group",
+        "count": len(states),
+        "requested_min": min_models,
+        "requested_max": max_models,
+        "budget_gb": group.budget_gb,
+        "fits": group.fits,
+        "models": states,
+        "ports": [state["port"] for state in states],
+        "primary_model_id": states[0]["model_id"],
+        "primary_endpoint_id": states[0]["endpoint_id"],
+    }
+    write_state(payload)
+    GROUP_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    GROUP_STATE_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    log(f"  ==> Local model group ready: {len(states)} models on ports {', '.join(map(str, payload['ports']))}")
+    return {"ok": True, "proc": processes[0] if processes else None, "procs": processes, **payload}
+
+
 def _files_from_disk() -> Dict[str, List[GGUFFile]]:
     """Build a file map from what is already on disk (offline re-runs)."""
     out: Dict[str, List[GGUFFile]] = {}
@@ -1083,20 +1523,27 @@ def wait_for_ready(timeout: float, state_file: Path = STATE_FILE, fail_file: Pat
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="Download + run the best local Llama for this PC.")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser = argparse.ArgumentParser(description="Download + run a hardware-fit local model group for this PC.")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT,
+                        help="first model port; additional models use the next ports")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--model", default=os.getenv("PSD_LOCAL_MODEL_ID", ""),
-                        help="force a model id (llama-3.3-70b, llama-3.1-8b, llama-3.2-3b, llama-3.2-1b)")
+                        help="prefer a model in the group (for example llama-3.2-3b or qwen-2.5-1.5b)")
     parser.add_argument("--min-quant", default="Q3_K_M")
+    parser.add_argument("--min-models", type=int, default=MIN_GROUP_MODELS,
+                        help="minimum resident models (default: 3)")
+    parser.add_argument("--max-models", type=int, default=MAX_GROUP_MODELS,
+                        help="maximum resident models (default: 5)")
+    parser.add_argument("--single-model", action="store_true",
+                        help="legacy mode: download and run only one model")
     parser.add_argument("--threads", type=int, default=0)
     parser.add_argument("--skip-download", action="store_true",
                         help="use only models already downloaded under runtime/models")
     parser.add_argument("--no-default", action="store_true", help="do not change the app's default model")
     parser.add_argument("--print", dest="print_only", action="store_true",
-                        help="print the model this PC would get and exit (no downloads)")
+                        help="print the hardware-fit model group and exit (no downloads)")
     parser.add_argument("--foreground", action="store_true",
-                        help="keep this process attached to llama-server (Ctrl+C stops it)")
+                        help="keep this process attached to all model servers (Ctrl+C stops them)")
     parser.add_argument("--wait-ready", type=int, default=0, metavar="SECONDS",
                         help="block until another instance finishes setup, then exit "
                              "(0 = ready, 3 = timed out or failed)")
@@ -1110,7 +1557,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     log(f"    {APP_NAME} - local Llama setup")
     log("  ============================================================")
 
+    # A stale success marker would make run.bat open the UI before a new group
+    # has finished. Existing servers can still be reused by the planner below.
     FAIL_FILE.unlink(missing_ok=True)
+    STATE_FILE.unlink(missing_ok=True)
+    GROUP_STATE_FILE.unlink(missing_ok=True)
 
     try:
         if args.print_only:
@@ -1124,27 +1575,59 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         files_by_repo[repo] = candidate_files(repo, list_repo_files(repo))
                     except Exception as exc:
                         log(f"  [warn] {repo}: {exc}")
-            plan = plan_model(system, files_by_repo, prefer_id=args.model, min_quant=args.min_quant)
-            if plan is None:
-                log("  No Llama GGUF reachable.")
+            if args.single_model:
+                plan = plan_model(system, files_by_repo, prefer_id=args.model, min_quant=args.min_quant)
+                if plan is None:
+                    log("  No local GGUF reachable.")
+                    return 1
+                log(json.dumps({
+                    "mode": "single",
+                    "model": plan.spec.label, "spec_id": plan.spec.id, "quant": plan.quant,
+                    "size_gb": round(plan.file.size_gb, 2), "repo": plan.file.repo,
+                    "file": plan.file.filename, "context": plan.context,
+                    "budget_gb": plan.budget_gb, "gpu_layers": plan_gpu_layers(system, plan),
+                    "fits": plan.fits,
+                }, indent=2))
+                return 0
+            group = plan_model_group(
+                system, files_by_repo, prefer_id=args.model, min_quant=args.min_quant,
+                min_models=args.min_models, max_models=args.max_models,
+            )
+            if group is None:
+                log("  No three-model group is reachable for this computer.")
                 return 1
             log(json.dumps({
-                "model": plan.spec.label, "spec_id": plan.spec.id, "quant": plan.quant,
-                "size_gb": round(plan.file.size_gb, 2), "repo": plan.file.repo,
-                "file": plan.file.filename, "context": plan.context,
-                "budget_gb": plan.budget_gb, "gpu_layers": plan_gpu_layers(system, plan),
-                "fits": plan.fits,
+                "mode": "group", "count": len(group.plans), "budget_gb": group.budget_gb,
+                "total_gb": round(group.total_gb, 2), "fits": group.fits,
+                "models": [
+                    {"model": p.spec.label, "spec_id": p.spec.id, "quant": p.quant,
+                     "size_gb": round(p.file.size_gb, 2), "repo": p.file.repo,
+                     "file": p.file.filename, "context": p.context}
+                    for p in group.plans
+                ],
             }, indent=2))
             return 0
 
-        result = prepare_local_llama(
-            port=args.port,
-            prefer_id=args.model,
-            host=args.host,
-            skip_download=args.skip_download,
-            threads=args.threads,
-            set_default=not args.no_default,
-        )
+        if args.single_model:
+            result = prepare_local_llama(
+                port=args.port,
+                prefer_id=args.model,
+                host=args.host,
+                skip_download=args.skip_download,
+                threads=args.threads,
+                set_default=not args.no_default,
+            )
+        else:
+            result = prepare_local_llama_group(
+                port=args.port,
+                prefer_id=args.model,
+                host=args.host,
+                skip_download=args.skip_download,
+                threads=args.threads,
+                set_default=not args.no_default,
+                min_models=args.min_models,
+                max_models=args.max_models,
+            )
     except KeyboardInterrupt:
         log("\n  Interrupted.")
         return 130
@@ -1161,15 +1644,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
 
     if args.foreground:
-        proc = result.get("proc")
-        log("  Press Ctrl+C to stop the local model.")
+        processes = result.get("procs") or [result.get("proc")]
+        log(f"  Press Ctrl+C to stop the {len([p for p in processes if p is not None])}-model group.")
         try:
-            while proc is not None and proc.poll() is None:
+            while any(proc is not None and proc.poll() is None for proc in processes):
                 time.sleep(1.0)
         except KeyboardInterrupt:
             pass
         finally:
-            stop_server(proc)
+            stop_servers(processes)
     return 0
 
 

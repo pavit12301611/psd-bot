@@ -1,5 +1,5 @@
-const STORAGE_WIDTH = 'odysseus-settings-sidebar-width';
-const STORAGE_COLLAPSED = 'odysseus-settings-sidebar-collapsed';
+const STORAGE_WIDTH = 'psd_ai-settings-sidebar-width';
+const STORAGE_COLLAPSED = 'psd_ai-settings-sidebar-collapsed';
 
 export const SETTINGS_SIDEBAR_DEFAULT_WIDTH = 220;
 export const SETTINGS_SIDEBAR_MIN_WIDTH = 150;

@@ -2,7 +2,7 @@
 memory_server.py
 
 MCP server exposing memory management (list, add, edit, delete, search).
-Imports MemoryManager and MemoryVectorStore from the Odysseus codebase.
+Imports MemoryManager and MemoryVectorStore from the psd.ai codebase.
 """
 
 import asyncio
@@ -26,10 +26,10 @@ _memory_manager = None
 _memory_vector = None
 _initialized = False
 
-_OWNER_ENV_KEYS = ("ODYSSEUS_MCP_MEMORY_OWNER", "ODYSSEUS_MEMORY_OWNER")
+_OWNER_ENV_KEYS = ("PSD_AI_MCP_MEMORY_OWNER", "PSD_AI_MEMORY_OWNER")
 _OWNER_SCOPE_ERROR = (
     "Error: Memory MCP owner is not configured for an owner-scoped memory store. "
-    "Set ODYSSEUS_MCP_MEMORY_OWNER for this server or use the owner-aware native memory tool."
+    "Set PSD_AI_MCP_MEMORY_OWNER for this server or use the owner-aware native memory tool."
 )
 _UNREADABLE_STORE_ERROR = (
     "Error: Memory store is temporarily unreadable — nothing was saved. "
