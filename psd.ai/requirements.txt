@@ -56,3 +56,8 @@ httpx2
 # create_engine() and raises ModuleNotFoundError if missing. -binary avoids
 # needing libpq-dev/pg_config on the host/image to compile it.
 psycopg2-binary
+# Native desktop front end (Qt for Python). The app window, chat, models,
+# documents... everything the browser page used to show. Installed by default
+# because the desktop window is the primary way to run psd.ai now; the web
+# assets remain only as legacy/static fallbacks.
+PySide6>=6.6

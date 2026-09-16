@@ -27,6 +27,29 @@
 
 > `dev` is the default branch and gets the newest changes first. Use [`main`](https://github.com/pavit12301611/psd-bot/tree/main) if you want the more curated branch.
 
+### Desktop app (default)
+
+psd.ai ships as a native Qt desktop app — the whole workspace (chat, agents,
+documents, email, models, local model group...) runs in one window, with the
+engine in-process: no port, no browser.
+
+**Windows:** double-click `run.bat` at the repo root. On first start the window
+asks you to create your admin account. Hinglish walkthrough:
+[`GUI_KAISE_CHALAYE.md`](../GUI_KAISE_CHALAYE.md).
+
+**Linux / macOS:**
+
+```bash
+git clone https://github.com/pavit12301611/psd-bot.git
+cd psd-bot/psd.ai
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+PSD_AI_SKIP_ADMIN_CREATION=1 python setup.py
+python psd_gui.py
+```
+
+### Server / Docker (headless or remote)
+
 ```bash
 git clone https://github.com/pavit12301611/psd-bot.git
 cd psd_ai

@@ -2,30 +2,50 @@
 
 The project lives in the **`psd.ai/`** folder.
 
+psd.ai is a **native desktop app** now: one window with chat, documents,
+notes, tasks, calendar, email, gallery, research, models and settings. There
+is no browser page and no localhost server window — the whole workspace engine
+runs in-process inside the app.
+
 ## Run it on Windows
 
 Double-click **`run.bat`** — that's it. It will:
 
 1. find Python 3.11+
-2. create a virtual environment & install dependencies (first run only)
-3. run first-time setup — you'll be asked for an admin username & password
-4. **download and run a hardware-fit group of 3 to 5 local models** (first run only)
-5. open <http://localhost:7000> in your browser
-6. start the server
+2. create a virtual environment & install dependencies, including Qt (first run only)
+3. run first-time setup — data folders, database, `.env`
+4. open the **psd.ai desktop window**
 
-After that, re-running `run.bat` just starts the app. Press `Ctrl+C` in its window to stop.
+On the very first start the window shows a *"Create your admin account"*
+screen — pick a username and password there. Later launches sign straight in
+on that machine. Close the window (or the tray icon) to stop everything.
+
+Hinglish step-by-step guide: [`GUI_KAISE_CHALAYE.md`](GUI_KAISE_CHALAYE.md).
+
+### Inside the app
+
+| Area | What it does |
+| --- | --- |
+| **Chat** | streaming answers, agent tools, approvals, attachments, sessions |
+| **Documents / Notes / Tasks / Calendar / Email / Gallery** | the full workspace, editable |
+| **Research** | deep-research runs and the report library |
+| **Models** | API endpoints (OpenAI-style, local, custom) + default chat model |
+| **Local Models** | hardware-fit GGUF picks, downloads with progress, llama.cpp server group start/stop — all in-app |
+| **Memory / Skills / MCP Servers** | what the agent remembers and can use |
+| **Settings** | themes, fonts, account & 2FA, assistant providers, data export/import |
+| **Diagnostics** | service health + the live application log (no console window needed) |
 
 ## The local AI model group
 
-Step 4 opens a **second window** titled *psd.ai - local model group*. On the
-first run it downloads three to five hardware-fit GGUF models concurrently and
-runs one `llama-server` per model on ports starting at `8080`. Later launches
-reuse everything cached under `psd.ai/runtime/` (git-ignored), so they start in
-a few seconds.
+**Local Models** in the sidebar measures your RAM, GPU and CPU, then lists the
+strongest GGUF models that can stay resident together. *Download selected*
+fetches the weights with live progress, *Start model group* serves one
+`llama-server` per model (ports from 8080) and registers each as an endpoint —
+and its output stays in the app's log pane instead of a second console window.
+*Stop* shuts every server down. Everything caches under `psd.ai/runtime/`
+(git-ignored), so later starts take seconds.
 
-It measures your RAM, GPU and CPU, then selects the strongest group that can
-stay resident together. The group never has fewer than three models and never
-exceeds five:
+The group never has fewer than three models and never exceeds five:
 
 | Your PC | Typical resident group |
 | --- | --- |
@@ -40,52 +60,46 @@ server headroom—not just whether each model fits individually:
 
 - **Context window first, quality second.** A smaller quant with a usable context
   beats a sharper model that would starve the other group members.
-- Weight downloads run in parallel, while each server gets its own local port
-  and endpoint in **Settings → Models**.
 - F16/BF16 is avoided in favour of faster Q8/Q6/Q5/Q4 quantisations, and the
-  first model in the group becomes the default chat model.
-
-The server itself is launched with `--flash-attn on` and a `q8_0` KV cache,
-which roughly halves the memory the conversation history costs — that is what
-buys the 16k window on a 16 GB laptop.
+  first model in the group becomes the default chat model (unless you already
+  picked one).
+- Servers launch with `--flash-attn on` and a `q8_0` KV cache, which roughly
+  halves the memory the conversation history costs — that is what buys the 16k
+  window on a 16 GB laptop.
 
 ### Hybrid Intel CPUs (12th gen and later)
 
 Chips like the i7-13620H mix fast **P-cores** with slow **E-cores**. Token
 generation is memory-bound and does *not* scale past the P-cores, while the
 E-cores drag every worker down to their speed — measured losses of 20–30%. So
-the launcher counts the P-cores and uses exactly that many threads (6 on a
+the model group counts the P-cores and uses exactly that many threads (6 on a
 13620H), rather than the 16 that Windows reports.
 
 ### Integrated graphics
 
 An Intel UHD or Iris Xe adapter reports itself as a GPU with ~128 MB of
-dedicated VRAM. Nothing useful offloads to that, so the launcher treats the
-machine as CPU-only and downloads the smaller CPU build instead of the Vulkan
-one.
-
-Every model is registered as a separate **psd.ai Local Llama** endpoint. The
-strongest selected model becomes the default chat model — but only if you have
-not already chosen one, so an existing setup is never overwritten.
-
-**Keep that second window open** while you use psd.ai; closing it stops the whole group.
+dedicated VRAM. Nothing useful offloads to that, so the app treats the machine
+as CPU-only and downloads the smaller CPU build instead of the Vulkan one.
 
 ### Options
 
 | Do this | To |
 | --- | --- |
-| set `PSD_NO_LOCAL_MODEL=1` | skip the local model group entirely and bring your own |
-| set `LLAMA_PORT=9090` | use 9090 as the first model port (the group uses the next ports too) |
-| run `python scripts\local_llama.py --print` | show the hardware-fit group, no downloads |
+| skip *Local Models* entirely | just don't press *Start model group* — bring your own endpoint under **Models** |
+| run `python scripts\local_llama.py --print` | show the hardware-fit group in a terminal, no downloads |
 | run `python scripts\local_llama.py --model llama-3.2-3b` | prefer a model while filling the group |
 | run `python scripts\local_llama.py --single-model` | use the legacy one-model mode |
 
-If the download or the GPU start fails, psd.ai still opens — the failure is
-reported in that window and you can add a model under **Settings → Models**.
+If a download or a GPU start fails, the rest of the app keeps working — the
+failure is shown in the Local Models log pane and you can add any model under
+**Models**.
 
 ## Branding
 
-The app is presented as **psd.ai** everywhere it is visible in a browser: the tab
-title, the login page, the sidebar, the welcome screen, and the PWA install name.
+The app is presented as **psd.ai** everywhere it is visible: the desktop
+window title, tray icon, first-run screen, sidebar, and the legacy web assets
+(tab title, login page, PWA install name).
 
-Full manual instructions (Linux/macOS/Docker) are in [`psd.ai/README.md`](psd.ai/README.md) and [`psd.ai/website/setup.md`](psd.ai/website/setup.md).
+Full manual instructions (Linux/macOS/Docker, plus the legacy web front end)
+are in [`psd.ai/README.md`](psd.ai/README.md) and
+[`psd.ai/website/setup.md`](psd.ai/website/setup.md).

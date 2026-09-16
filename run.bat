@@ -1,32 +1,32 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-title psd.ai - Setup and Launch
+title psd.ai - Desktop
 
 REM ==================================================================
-REM  psd.ai - one-click launcher for Windows
+REM  psd.ai - one-click DESKTOP launcher for Windows
 REM
 REM  Double-click this file and it will:
 REM    1. find Python 3.11+
-REM    2. create a virtual environment      (first run only)
-REM    3. install all dependencies          (first run only)
-REM    4. run setup - creates admin account (first run only)
-REM    5. download + run a hardware-fit group of 3-5 local models
-REM       (first run only - a few GB per model, in a second window)
-REM    6. open http://localhost:7000 in your browser
-REM    7. start the server
+REM    2. create a virtual environment        (first run only)
+REM    3. install all dependencies, incl. Qt  (first run only)
+REM    4. run setup - data folders + database (first run only)
+REM    5. open the psd.ai desktop window
+REM
+REM  There is NO browser page and NO localhost server window: the app
+REM  runs fully inside the desktop window (the workspace engine runs
+REM  in-process). On the very first start the window asks you to create
+REM  your admin account; local models are managed later from
+REM  "Local Models" inside the app (download, progress, start/stop).
 REM
 REM  Safe to re-run - steps already done are skipped, so later
-REM  launches start straight away. Keep this next to the psd.ai
-REM  folder. Press Ctrl+C in this window to stop the server.
+REM  launches open straight away. Keep this file next to the psd.ai
+REM  folder. Close the psd.ai window (or its tray icon) to stop.
+REM
+REM  Debugging: set PSD_GUI_CONSOLE=1 before double-clicking to run the
+REM  app inside this console instead of a detached window.
 REM ==================================================================
 
 set "APP_DIR=%~dp0psd.ai"
-set "PORT=7000"
-REM Base port for the local model group, and how long to wait for a
-REM first-run model download before opening the app anyway. Override by
-REM setting these in the environment before double-clicking run.bat.
-if not defined LLAMA_PORT set "LLAMA_PORT=8080"
-if not defined MODEL_WAIT_SECONDS set "MODEL_WAIT_SECONDS=2400"
 
 if not exist "%APP_DIR%\app.py" (
     echo.
@@ -43,7 +43,7 @@ cd /d "%APP_DIR%"
 
 echo.
 echo  ============================================================
-echo    psd.ai  -  one-click setup + launch
+echo    psd.ai  -  desktop app setup + launch
 echo  ============================================================
 echo.
 
@@ -80,6 +80,7 @@ REM ----------------------------------------------------------------
 REM  2. Create the virtual environment (first run only)
 REM ----------------------------------------------------------------
 set "VENVPY=%APP_DIR%\venv\Scripts\python.exe"
+set "VENVPYW=%APP_DIR%\venv\Scripts\pythonw.exe"
 
 if not exist "%VENVPY%" (
     echo  ==^> Creating virtual environment ^(venv^)...
@@ -97,6 +98,7 @@ if not exist "%VENVPY%" (
 
 REM ----------------------------------------------------------------
 REM  3. Install dependencies (first run only - keeps restarts fast)
+REM     requirements.txt includes PySide6 (the Qt desktop toolkit)
 REM ----------------------------------------------------------------
 if not exist "venv\.deps_ok" (
     echo  ==^> Installing dependencies... first run can take a few minutes.
@@ -117,10 +119,13 @@ if not exist "venv\.deps_ok" (
 )
 
 REM ----------------------------------------------------------------
-REM  4. First-time setup (creates data folders, database and .env,
-REM     and asks you for an admin username + password on first run)
+REM  4. First-time setup (data folders, database, .env).
+REM     Admin account creation is skipped here on purpose: the desktop
+REM     window shows a proper "Create your admin account" screen on its
+REM     very first start.
 REM ----------------------------------------------------------------
 echo  ==^> Running setup...
+set "PSD_AI_SKIP_ADMIN_CREATION=1"
 "%VENVPY%" setup.py
 if errorlevel 1 (
     echo.
@@ -131,42 +136,48 @@ if errorlevel 1 (
 )
 
 REM ----------------------------------------------------------------
-REM  5. Local AI model group (first run downloads 3-5 fit models)
-REM
-REM     Picks a 3-5 model group for THIS PC (RAM / GPU), downloads the
-REM     llama.cpp server + model weights, serves one model per port
-REM     starting at %LLAMA_PORT%, and registers the group in the app.
-REM
-REM     Set PSD_NO_LOCAL_MODEL=1 to skip this and bring your own model.
+REM  5. Sanity-check the desktop toolkit, then open the app window.
+REM     pythonw.exe = no console window at all; this launcher window
+REM     closes itself right after. No second window, no localhost.
 REM ----------------------------------------------------------------
-if not defined PSD_NO_LOCAL_MODEL (
+echo  ==^> Checking the desktop toolkit ^(PySide6^)...
+"%VENVPY%" -c "import PySide6.QtWidgets" >nul 2>&1
+if errorlevel 1 (
     echo.
-    echo  ==^> Starting the local model group in a second window...
-    echo      First run downloads llama.cpp + 3-5 fit model weights ^(a few GB each^).
-    echo      Keep that window open while you use psd.ai - closing it stops the model group.
-    if exist "runtime\local_model_failed.txt" del /q "runtime\local_model_failed.txt"
-    start "psd.ai - local model group" cmd /k ""%VENVPY%" scripts\local_llama.py --port %LLAMA_PORT% --foreground"
-    "%VENVPY%" scripts\local_llama.py --wait-ready %MODEL_WAIT_SECONDS%
-) else (
-    echo.
-    echo  ==^> PSD_NO_LOCAL_MODEL is set - skipping the local model download.
+    echo  [ERROR] PySide6 (Qt) is missing from the virtual environment.
+    echo          Re-running the dependency install now...
+    "%VENVPY%" -m pip install -r requirements.txt
+    "%VENVPY%" -c "import PySide6.QtWidgets" >nul 2>&1
+    if errorlevel 1 (
+        echo.
+        echo  [ERROR] Still missing. Scroll up for the pip error, fix it,
+        echo          then double-click run.bat again.
+        echo.
+        pause
+        exit /b 1
+    )
 )
 
-REM ----------------------------------------------------------------
-REM  6. Open the app in the browser a few seconds after the server
-REM     starts, then launch the server in this window
-REM ----------------------------------------------------------------
 echo.
-echo  ==^> Starting psd.ai at http://localhost:%PORT%
-echo      The page will open automatically - press Ctrl+C here to stop.
+echo  ==^> Opening the psd.ai desktop window...
+echo      First start: create your admin account in the window.
+echo      Local models: app -^> "Local Models" ^(download / start / stop^).
+echo      Close the psd.ai window or tray icon to stop everything.
 echo.
 
-set "APP_PORT=%PORT%"
-start "" /min cmd /c "timeout /t 5 /nobreak >nul & start http://localhost:%PORT%"
+if defined PSD_GUI_CONSOLE (
+    "%VENVPY%" psd_gui.py
+) else if exist "%VENVPYW%" (
+    start "" "%VENVPYW%" "%APP_DIR%\psd_gui.py"
+    goto :launched
+) else (
+    start "psd.ai" /min "%VENVPY%" psd_gui.py
+)
+goto :eof
 
-"%VENVPY%" -m uvicorn app:app --host 127.0.0.1 --port %PORT%
-
-echo.
-echo  psd.ai has stopped.
-pause
+:launched
+REM Give the app a moment to claim its single-instance lock, then let
+REM this launcher window disappear.
+timeout /t 2 /nobreak >nul
 endlocal
+exit /b 0
