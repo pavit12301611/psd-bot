@@ -10,23 +10,22 @@ Double-click **`run.bat`** — that's it. It will:
 2. create a virtual environment & install dependencies (first run only)
 3. run first-time setup — you'll be asked for an admin username & password
 4. **download and run a hardware-fit group of 3 to 5 local models** (first run only)
-5. open <http://localhost:7000> in your browser
-6. start the server
+5. **open the psd.ai desktop app (a native GUI window)**
 
-After that, re-running `run.bat` just starts the app. Press `Ctrl+C` in its window to stop.
+After that, re-running `run.bat` just starts the app. Close the app window to stop.
 
-> **Prefer no localhost at all?** There's a terminal interface that replaces the
-> browser window entirely — no web server, no browser, and no port:
+The desktop app runs psd.ai **in-process**: no web server, no browser, and no
+localhost page. It drives the exact same backend as the old website, so your
+chats, history, memory, models and settings all live in the same data folder —
+nothing is lost, it's simply drawn in a window instead of a browser tab.
+
+> **Want the old localhost server instead?** Set `PSD_GUI_SERVE=1` and `run.bat`
+> will run `python -m uvicorn app:app --host 127.0.0.1 --port 7000` (matching
+> the previous behaviour) instead of embedding the app.
 >
-> * **Windows** — double-click **`tui.bat`**.
-> * **Linux / macOS** — run **`./tui.sh`**.
->
-> It runs the exact same psd.ai backend (same chats, history, memory, settings)
-> and draws the UI inside your terminal. Type a message and press Enter; press
-> `Esc` to reach the command keys (`q` quit, `n` new chat, `m` model picker,
-> `e` agent mode, …). On first run it sets everything up in the terminal, just
-> like the browser first-run flow. See the banner inside the app or
-> `python psd.ai/psd_tui.py --help` for the full key list and options.
+> **Prefer a terminal interface?** `tui.bat` (Windows) / `./tui.sh`
+> (`Linux/macOS`) still ships as an alternative: the full-screen terminal
+> edition of the same backend.
 
 ## The local AI model group
 
@@ -88,10 +87,18 @@ not already chosen one, so an existing setup is never overwritten.
 | Do this | To |
 | --- | --- |
 | set `PSD_NO_LOCAL_MODEL=1` | skip the local model group entirely and bring your own |
+| set `PSD_GUI_SERVE=1` | run the old localhost server mode (uvicorn on `:7000`) instead of the desktop app |
+| set `PSD_GUI_QT=PyQt5` | force the PyQt5 UI binding (defaults to the PySide6 wheel) |
 | set `LLAMA_PORT=9090` | use 9090 as the first model port (the group uses the next ports too) |
 | run `python scripts\local_llama.py --print` | show the hardware-fit group, no downloads |
 | run `python scripts\local_llama.py --model llama-3.2-3b` | prefer a model while filling the group |
 | run `python scripts\local_llama.py --single-model` | use the legacy one-model mode |
+
+The desktop app can also be run directly:
+
+* `python psd.ai/psd_gui.py` — embedded mode (no port, no browser).
+* `python psd.ai/psd_gui.py --host HOST --port PORT` — attach to an already-running server.
+* `python psd.ai/psd_gui.py --serve --port 7000` — start the server yourself, then attach.
 
 If the download or the GPU start fails, psd.ai still opens — the failure is
 reported in that window and you can add a model under **Settings → Models**.

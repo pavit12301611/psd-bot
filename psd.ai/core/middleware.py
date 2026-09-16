@@ -21,6 +21,26 @@ INTERNAL_TOOL_TOKEN = os.environ.get("PSD_AI_INTERNAL_TOKEN") or secrets.token_h
 INTERNAL_TOOL_HEADER = "X-psd.ai-Internal-Token"
 
 
+def _allow_frame_embedding() -> bool:
+    """Opt-in escape hatch for environments that preview the app in an iframe.
+
+    Defaults to ``False`` so the app keeps sending ``X-Frame-Options: DENY``
+    and ``frame-ancestors 'none'`` (clickjacking protection) everywhere.
+    Set ``PSD_AI_ALLOW_FRAME=1`` ONLY for a throwaway local/preview instance
+    whose origin you control (e.g. a sandboxed live preview that loads the
+    app inside an iframe on a different origin). Never enable it on a
+    network-exposed or internet-facing deployment.
+    """
+    return os.getenv("PSD_AI_ALLOW_FRAME", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def allow_frame_embedding() -> bool:
+    """Alias spelled as a public helper for call sites."""
+
+    return _allow_frame_embedding()
+
+
+
 def get_application_route_path(scope: Mapping[str, object]) -> str:
     """Return the application-relative path used by Starlette routing.
 
@@ -111,16 +131,25 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if is_https:
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
+        # Preview escape hatch: only when explicitly opted in, relax the
+        # anti-framing headers so an iframe-based preview can render the app.
+        # Safe by default — see _allow_frame_embedding().
+        allow_frame = _allow_frame_embedding()
+
         if is_report:
-            response.headers["Content-Security-Policy"] = (
+            report_csp = (
                 "default-src 'self'; "
                 "script-src 'self' 'unsafe-inline'; "
                 "style-src 'self' 'unsafe-inline'; "
                 "font-src 'self'; "
                 "img-src 'self' data: blob: https:; "
                 "connect-src 'self'; "
-                "frame-ancestors 'none'"
             )
+            if allow_frame:
+                report_csp += "frame-src *; frame-ancestors *"
+            else:
+                report_csp += "frame-ancestors 'none'"
+            response.headers["Content-Security-Policy"] = report_csp
         elif is_tool_render:
             # Skip framing headers for tools.
             pass
@@ -131,14 +160,19 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "frame-ancestors 'self'"
             )
         else:
-            response.headers["X-Frame-Options"] = "DENY"
+            if allow_frame:
+                # Same-origin framing is what an iframe preview uses after the
+                # proxy fronts the app; do NOT send DENY in that case.
+                response.headers["X-Frame-Options"] = "SAMEORIGIN"
+            else:
+                response.headers["X-Frame-Options"] = "DENY"
             # NOTE: `style-src 'unsafe-inline'` is intentionally retained.
             # `static/index.html` and `static/login.html` ship inline <style>
             # blocks, and several JS modules build runtime `style=""` attrs.
             # Migrating to nonce-only requires templating the HTML files +
             # auditing every JS-set style attribute. Since inline styles
             # don't execute script, the residual risk is visual-only.
-            response.headers["Content-Security-Policy"] = (
+            main_csp = (
                 "default-src 'self'; "
                 f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
                 "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
@@ -147,6 +181,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "media-src 'self' blob:; "
                 "connect-src 'self'; "
                 "frame-src 'self'; "
-                "frame-ancestors 'none'"
             )
+            if allow_frame:
+                main_csp += "frame-ancestors *"
+            else:
+                main_csp += "frame-ancestors 'none'"
+            response.headers["Content-Security-Policy"] = main_csp
         return response
