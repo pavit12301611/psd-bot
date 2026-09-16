@@ -9,15 +9,22 @@ REM  Double-click this file and it will:
 REM    1. find Python 3.11+
 REM    2. create a virtual environment      (first run only)
 REM    3. install all dependencies          (first run only)
-REM    4. run setup - creates admin account (first run only)
+REM    4. run setup - creates the admin account (first run only)
 REM    5. download + run a hardware-fit group of 3-5 local models
 REM       (first run only - a few GB per model, in a second window)
-REM    6. open http://localhost:7000 in your browser
-REM    7. start the server
+REM    6. open the psd.ai desktop app (GUI window)
+REM
+REM  The desktop app runs psd.ai IN-PROCESS: no web server, no browser,
+REM  no localhost page. Chats, history, memory and settings all live in
+REM  the same data folder as before, so nothing is lost.
 REM
 REM  Safe to re-run - steps already done are skipped, so later
 REM  launches start straight away. Keep this next to the psd.ai
-REM  folder. Press Ctrl+C in this window to stop the server.
+REM  folder. Close the app window to stop.
+REM
+REM  Prefer the old localhost server instead? Set PSD_GUI_SERVE=1 and it
+REM  will run `python -m uvicorn app:app --host 127.0.0.1 --port 7000`
+REM  (matching the previous behaviour) instead of embedding the app.
 REM ==================================================================
 
 set "APP_DIR=%~dp0psd.ai"
@@ -96,12 +103,13 @@ if not exist "%VENVPY%" (
 )
 
 REM ----------------------------------------------------------------
-REM  3. Install dependencies (first run only - keeps restarts fast)
+REM  3. Install dependencies (first run only - keeps restarts fast).
+REM     Adds PySide6 for the desktop (GUI) window.
 REM ----------------------------------------------------------------
 if not exist "venv\.deps_ok" (
     echo  ==^> Installing dependencies... first run can take a few minutes.
     "%VENVPY%" -m pip install --upgrade pip --quiet
-    "%VENVPY%" -m pip install -r requirements.txt
+    "%VENVPY%" -m pip install -r requirements.txt PySide6
     if errorlevel 1 (
         echo.
         echo  [ERROR] Dependency install failed - scroll up for the pip error.
@@ -153,18 +161,27 @@ if not defined PSD_NO_LOCAL_MODEL (
 )
 
 REM ----------------------------------------------------------------
-REM  6. Open the app in the browser a few seconds after the server
-REM     starts, then launch the server in this window
+REM  6. Launch the psd.ai desktop app (GUI window).
+REM
+REM     Default: embedded - psd.ai runs inside this window (no web
+REM     server, no browser, no localhost page).
+REM
+REM     Set PSD_GUI_SERVE=1 to run the previous localhost server mode
+REM     (uvicorn on 127.0.0.1:%PORT%) instead.
 REM ----------------------------------------------------------------
 echo.
-echo  ==^> Starting psd.ai at http://localhost:%PORT%
-echo      The page will open automatically - press Ctrl+C here to stop.
-echo.
-
-set "APP_PORT=%PORT%"
-start "" /min cmd /c "timeout /t 5 /nobreak >nul & start http://localhost:%PORT%"
-
-"%VENVPY%" -m uvicorn app:app --host 127.0.0.1 --port %PORT%
+if defined PSD_GUI_SERVE (
+    echo  ==^> Starting psd.ai server at http://localhost:%PORT% ...
+    echo      Close this window (Ctrl+C) to stop.
+    echo.
+    set "APP_PORT=%PORT%"
+    "%VENVPY%" -m uvicorn app:app --host 127.0.0.1 --port %PORT%
+) else (
+    echo  ==^> Starting the psd.ai desktop app...
+    echo      No browser or localhost page - psd.ai is this window.
+    echo.
+    "%VENVPY%" psd_gui.py
+)
 
 echo.
 echo  psd.ai has stopped.

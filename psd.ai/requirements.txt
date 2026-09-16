@@ -11,6 +11,11 @@ pypdf
 beautifulsoup4
 charset-normalizer
 numpy
+# Desktop (GUI) window — psd_gui.py, the default interface launched by
+# run.bat. LGPL-licensed Qt binding (no system Qt install required on
+# Windows/macOS/Linux wheels). psd_gui.py also works with PyQt5 if present.
+PySide6
+
 # Vector store + local embeddings for RAG, semantic memory, and tool
 # selection. Used on core agent paths, so installed by default — the app
 # still degrades to keyword fallback if they're ever missing.
