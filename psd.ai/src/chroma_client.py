@@ -38,6 +38,20 @@ def get_chroma_client():
     if _client is not None:
         return _client
 
+    host = os.getenv("CHROMADB_HOST", "localhost")
+    port = int(os.getenv("CHROMADB_PORT", "8100"))
+
+    # Probe the port BEFORE importing chromadb. `import chromadb` pulls in
+    # numpy, whose OpenBLAS DLL can deadlock on load in a console-less child
+    # process on some Windows machines (the desktop engine). When no ChromaDB
+    # service is running there is no reason to pay - or risk - that import.
+    if not _port_open(host, port):
+        raise RuntimeError(
+            f"ChromaDB is not reachable at {host}:{port}. Start the ChromaDB "
+            f"service (e.g. `docker compose up chromadb`) or set CHROMADB_HOST / "
+            f"CHROMADB_PORT to point at a running instance."
+        )
+
     try:
         import chromadb
     except ImportError as e:
@@ -45,16 +59,6 @@ def get_chroma_client():
             "ChromaDB integration is not installed. Install the optional "
             "dependency with: pip install chromadb-client"
         ) from e
-
-    host = os.getenv("CHROMADB_HOST", "localhost")
-    port = int(os.getenv("CHROMADB_PORT", "8100"))
-
-    if not _port_open(host, port):
-        raise RuntimeError(
-            f"ChromaDB is not reachable at {host}:{port}. Start the ChromaDB "
-            f"service (e.g. `docker compose up chromadb`) or set CHROMADB_HOST / "
-            f"CHROMADB_PORT to point at a running instance."
-        )
 
     client = chromadb.HttpClient(host=host, port=port)
 

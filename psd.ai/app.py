@@ -563,6 +563,7 @@ async def serve_generated_image(filename: str, request: Request):
     )
 
 # ========= YOUTUBE INIT =========
+logger.info("Startup phase: youtube")
 from services.youtube import init_youtube
 init_youtube()
 
@@ -576,6 +577,7 @@ init_youtube()
 # 2.12 were mutually incompatible at the time. With the current pins
 # (chromadb 1.5.x + pydantic 2.13.x) the init works and Personal Docs
 # (POST /api/personal/add_directory etc.) is functional again.
+logger.info("Startup phase: vector RAG (ChromaDB probe)")
 from src.rag_singleton import get_rag_manager
 rag_manager = get_rag_manager()
 rag_available = rag_manager is not None
@@ -591,6 +593,7 @@ else:
 from src.config import config
 
 # ========= COMPONENT INITIALIZATION =========
+logger.info("Startup phase: managers (sessions, memory, models, uploads)")
 from src.app_initializer import initialize_managers
 
 components = initialize_managers(BASE_DIR, rag_manager)
@@ -618,6 +621,7 @@ model_discovery   = components["model_discovery"]
 skills_manager    = components["skills_manager"]
 
 # TTS
+logger.info("Startup phase: speech services")
 from services.tts import get_tts_service
 
 tts_service = get_tts_service()
@@ -641,6 +645,7 @@ async def web_search_error_handler(request: Request, exc: WebSearchError):
     return JSONResponse(status_code=502, content={"error": "WEB_SEARCH_ERROR", "message": str(exc)})
 
 # ========= WEBHOOK MANAGER =========
+logger.info("Startup phase: routes")
 from src.webhook_manager import WebhookManager
 
 webhook_manager = WebhookManager(api_key_manager=api_key_manager)

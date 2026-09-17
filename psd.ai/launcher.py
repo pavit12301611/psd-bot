@@ -1,5 +1,10 @@
 # launcher.py
-"""Dedicated entrypoint for the standalone Windows portable launcher.
+"""Dedicated entrypoint for the LEGACY browser-based Windows portable build.
+
+NOTE: the supported desktop experience is now the native Tauri app under
+``desktop/`` (launched by ``run.bat``), which starts ``desktop_server.py`` as
+a private IPC sidecar and never opens a browser. This file is kept only for
+the PyInstaller "portable" bundle (build-windows-portable.ps1).
 
 Handles:
 - Immediate GUI splash screen creation using tkinter.

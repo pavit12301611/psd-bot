@@ -51,7 +51,60 @@ if str(BASE_DIR) not in sys.path:
 
 APP_NAME = "psd.ai"
 DEFAULT_PORT = int(os.getenv("PSD_LLAMA_PORT", "8080") or "8080")
-RUNTIME_DIR = BASE_DIR / "runtime"
+
+
+def _default_runtime_dir() -> Path:
+    r"""Device-level home for llama.cpp + model weights.
+
+    Lives OUTSIDE the project folder so re-downloading / re-extracting the
+    code never throws away multi-GB models:
+      Windows : %LOCALAPPDATA%\psd.ai\runtime
+      macOS   : ~/Library/Application Support/psd.ai/runtime
+      Linux   : $XDG_DATA_HOME/psd.ai/runtime  (~/.local/share/psd.ai/runtime)
+    Override with PSD_AI_RUNTIME_DIR. A legacy ``psd.ai/runtime`` folder is
+    moved here automatically the first time.
+    """
+    override = os.getenv("PSD_AI_RUNTIME_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
+    if sys.platform.startswith("win"):
+        base = os.getenv("LOCALAPPDATA") or os.getenv("APPDATA") or str(Path.home() / "AppData" / "Local")
+        return Path(base) / "psd.ai" / "runtime"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "psd.ai" / "runtime"
+    return Path(os.getenv("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "psd.ai" / "runtime"
+
+
+def _migrate_legacy_runtime(target: Path) -> None:
+    """One-time move of the old in-repo ``runtime/`` into the device folder."""
+    legacy = BASE_DIR / "runtime"
+    try:
+        if not legacy.is_dir() or legacy.resolve() == target.resolve():
+            return
+        if not any(legacy.iterdir()):
+            return
+        target.mkdir(parents=True, exist_ok=True)
+        for item in legacy.iterdir():
+            dest = target / item.name
+            if dest.exists():
+                # keep whatever is already in the device folder, drop the copy
+                if item.is_dir():
+                    shutil.rmtree(item, ignore_errors=True)
+                else:
+                    item.unlink(missing_ok=True)
+                continue
+            shutil.move(str(item), str(dest))
+        try:
+            legacy.rmdir()
+        except OSError:
+            pass
+        print(f"  [ok] moved existing models from {legacy} to {target}")
+    except Exception as exc:  # never block startup on a housekeeping move
+        print(f"  [warn] could not migrate legacy runtime folder: {exc}")
+
+
+RUNTIME_DIR = _default_runtime_dir()
+_migrate_legacy_runtime(RUNTIME_DIR)
 MODELS_DIR = RUNTIME_DIR / "models"
 LLAMA_DIR = RUNTIME_DIR / "llama.cpp"
 LOG_FILE = RUNTIME_DIR / "llama-server.log"
@@ -1538,7 +1591,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         help="legacy mode: download and run only one model")
     parser.add_argument("--threads", type=int, default=0)
     parser.add_argument("--skip-download", action="store_true",
-                        help="use only models already downloaded under runtime/models")
+                        help="use only models already downloaded under the device runtime/models folder")
     parser.add_argument("--no-default", action="store_true", help="do not change the app's default model")
     parser.add_argument("--print", dest="print_only", action="store_true",
                         help="print the hardware-fit model group and exit (no downloads)")

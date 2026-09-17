@@ -3,25 +3,32 @@ setlocal EnableExtensions EnableDelayedExpansion
 title psd.ai - Setup and Launch
 
 REM ==================================================================
-REM  psd.ai - one-click launcher for Windows
+REM  psd.ai - one-click launcher for Windows (desktop app)
 REM
 REM  Double-click this file and it will:
 REM    1. find Python 3.11+
 REM    2. create a virtual environment      (first run only)
 REM    3. install all dependencies          (first run only)
-REM    4. run setup - creates admin account (first run only)
+REM    4. run setup - creates data folders  (the app asks you to create
+REM       your admin account in its own window on first launch)
 REM    5. download + run a hardware-fit group of 3-5 local models
 REM       (first run only - a few GB per model, in a second window)
-REM    6. open http://localhost:7000 in your browser
-REM    7. start the server
+REM    6. open the psd.ai DESKTOP APP  (no browser, no localhost URL)
+REM
+REM  The desktop app is a native window (Tauri + React). It starts the
+REM  Python engine privately inside itself and talks to it over IPC.
+REM  Nothing is served on a public port and nothing opens in a browser.
 REM
 REM  Safe to re-run - steps already done are skipped, so later
 REM  launches start straight away. Keep this next to the psd.ai
-REM  folder. Press Ctrl+C in this window to stop the server.
+REM  folder. Close the app window to stop everything.
 REM ==================================================================
 
-set "APP_DIR=%~dp0psd.ai"
-set "PORT=7000"
+set "ROOT=%~dp0"
+set "APP_DIR=%ROOT%psd.ai"
+set "DESKTOP_DIR=%ROOT%desktop"
+REM Models + llama.cpp live OUTSIDE this folder in %LOCALAPPDATA%\psd.ai\runtime
+REM (override with PSD_AI_RUNTIME_DIR), so a fresh copy of the code reuses them.
 REM Base port for the local model group, and how long to wait for a
 REM first-run model download before opening the app anyway. Override by
 REM setting these in the environment before double-clicking run.bat.
@@ -43,7 +50,7 @@ cd /d "%APP_DIR%"
 
 echo.
 echo  ============================================================
-echo    psd.ai  -  one-click setup + launch
+echo    psd.ai  -  one-click setup + launch  (desktop app)
 echo  ============================================================
 echo.
 
@@ -52,10 +59,14 @@ REM  1. Find Python 3.11+ (py launcher first, then plain python)
 REM ----------------------------------------------------------------
 echo  ==^> Looking for Python 3.11+...
 
+REM Prefer 3.12 / 3.13 / 3.11 (mature wheels for numpy, onnxruntime, etc.).
+REM 3.14 is accepted as a last resort but some native packages are still
+REM settling there, so it is tried after the others.
 set "PYCMD="
-py -3.13 -c "import sys" >nul 2>&1 && set "PYCMD=py -3.13"
-if not defined PYCMD py -3.12 -c "import sys" >nul 2>&1 && set "PYCMD=py -3.12"
+py -3.12 -c "import sys" >nul 2>&1 && set "PYCMD=py -3.12"
+if not defined PYCMD py -3.13 -c "import sys" >nul 2>&1 && set "PYCMD=py -3.13"
 if not defined PYCMD py -3.11 -c "import sys" >nul 2>&1 && set "PYCMD=py -3.11"
+if not defined PYCMD py -3.14 -c "import sys" >nul 2>&1 && set "PYCMD=py -3.14"
 if not defined PYCMD (
     python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1 && set "PYCMD=python"
 )
@@ -80,6 +91,27 @@ REM ----------------------------------------------------------------
 REM  2. Create the virtual environment (first run only)
 REM ----------------------------------------------------------------
 set "VENVPY=%APP_DIR%\venv\Scripts\python.exe"
+
+REM numpy's OpenBLAS DLL can deadlock on import on some Windows PCs (AV /
+REM loader-lock). Force a single BLAS thread everywhere - this is the known
+REM fix and costs nothing for psd.ai's workloads.
+set "OPENBLAS_NUM_THREADS=1"
+set "OMP_NUM_THREADS=1"
+set "MKL_NUM_THREADS=1"
+set "OPENBLAS_MAIN_FREE=1"
+
+REM Sanity check an existing venv: numpy must import within 20s or the venv
+REM is rebuilt from scratch.
+if exist "%VENVPY%" if exist "venv\.deps_ok" (
+    echo  ==^> Checking the virtual environment...
+    call :verify_numpy
+    if errorlevel 1 (
+        echo      numpy in the existing venv hangs or fails - rebuilding the venv.
+        rmdir /s /q venv
+    ) else (
+        echo       venv OK
+    )
+)
 
 if not exist "%VENVPY%" (
     echo  ==^> Creating virtual environment ^(venv^)...
@@ -116,11 +148,37 @@ if not exist "venv\.deps_ok" (
     echo       ^(Delete the venv folder to force a reinstall.^)
 )
 
+REM Verify numpy actually imports in THIS venv (20s budget). If the default
+REM build deadlocks on this PC, fall back to the numpy 1.26 line, which ships
+REM a different OpenBLAS build.
+echo  ==^> Verifying numpy...
+call :verify_numpy
+if errorlevel 1 (
+    echo      numpy 2.x hangs on import on this PC - switching to numpy 1.26 ...
+    "%VENVPY%" -m pip install --quiet "numpy<2" --force-reinstall
+    call :verify_numpy
+    if errorlevel 1 (
+        echo.
+        echo  [ERROR] numpy cannot be imported on this PC ^(import hangs^).
+        echo          This is usually antivirus / endpoint-protection interfering with
+        echo          the OpenBLAS DLL. Try: add the folder
+        echo            %APP_DIR%\venv
+        echo          to your antivirus exclusions, then double-click run.bat again.
+        echo.
+        pause
+        exit /b 1
+    )
+)
+echo       numpy OK
+
 REM ----------------------------------------------------------------
-REM  4. First-time setup (creates data folders, database and .env,
-REM     and asks you for an admin username + password on first run)
+REM  4. First-time setup (creates data folders, database and .env).
+REM     The admin account is created inside the desktop app's own
+REM     first-run screen, so the console prompt is skipped here.
 REM ----------------------------------------------------------------
 echo  ==^> Running setup...
+set "PSD_AI_DEFER_ADMIN=1"
+set "PSD_AI_SKIP_RUN_HINT=1"
 "%VENVPY%" setup.py
 if errorlevel 1 (
     echo.
@@ -144,7 +202,10 @@ if not defined PSD_NO_LOCAL_MODEL (
     echo  ==^> Starting the local model group in a second window...
     echo      First run downloads llama.cpp + 3-5 fit model weights ^(a few GB each^).
     echo      Keep that window open while you use psd.ai - closing it stops the model group.
-    if exist "runtime\local_model_failed.txt" del /q "runtime\local_model_failed.txt"
+    if not defined PSD_AI_RUNTIME_DIR set "PSD_AI_RUNTIME_DIR=%LOCALAPPDATA%\psd.ai\runtime"
+    echo      Models are stored on this PC at !PSD_AI_RUNTIME_DIR!
+    echo      ^(outside the project folder, so re-downloading the code never re-downloads models^).
+    if exist "%PSD_AI_RUNTIME_DIR%\local_model_failed.txt" del /q "%PSD_AI_RUNTIME_DIR%\local_model_failed.txt"
     start "psd.ai - local model group" cmd /k ""%VENVPY%" scripts\local_llama.py --port %LLAMA_PORT% --foreground"
     "%VENVPY%" scripts\local_llama.py --wait-ready %MODEL_WAIT_SECONDS%
 ) else (
@@ -153,20 +214,133 @@ if not defined PSD_NO_LOCAL_MODEL (
 )
 
 REM ----------------------------------------------------------------
-REM  6. Open the app in the browser a few seconds after the server
-REM     starts, then launch the server in this window
+REM  6. Launch the desktop app.
+REM
+REM     Preference order:
+REM       a) a built app:      desktop\src-tauri\target\release\psd-ai-desktop.exe
+REM       b) a portable copy:  desktop\psd.ai.exe   (drop a release build here)
+REM       c) build from source: Node.js + Rust + C++ Build Tools are
+REM          installed AUTOMATICALLY if missing, then the app is built
+REM          once (later runs reuse the exe)
+REM
+REM     The app spawns psd.ai\desktop_server.py itself on a private,
+REM     random loopback port and talks to it through IPC. Nothing is
+REM     opened in a browser and no fixed port is used.
 REM ----------------------------------------------------------------
 echo.
-echo  ==^> Starting psd.ai at http://localhost:%PORT%
-echo      The page will open automatically - press Ctrl+C here to stop.
+echo  ==^> Opening the psd.ai desktop app...
+echo      Close the app window to stop psd.ai.
 echo.
 
-set "APP_PORT=%PORT%"
-start "" /min cmd /c "timeout /t 5 /nobreak >nul & start http://localhost:%PORT%"
+set "PSD_AI_APP_DIR=%APP_DIR%"
+set "PSD_AI_PYTHON=%VENVPY%"
 
-"%VENVPY%" -m uvicorn app:app --host 127.0.0.1 --port %PORT%
+set "APP_EXE="
+if exist "%DESKTOP_DIR%\src-tauri\target\release\psd-ai-desktop.exe" set "APP_EXE=%DESKTOP_DIR%\src-tauri\target\release\psd-ai-desktop.exe"
+if not defined APP_EXE if exist "%DESKTOP_DIR%\psd.ai.exe" set "APP_EXE=%DESKTOP_DIR%\psd.ai.exe"
+if not defined APP_EXE if exist "%ROOT%psd.ai.exe" set "APP_EXE=%ROOT%psd.ai.exe"
 
+if defined APP_EXE (
+    echo       Using %APP_EXE%
+    "%APP_EXE%"
+    goto :done
+)
+
+REM ---- build from source: auto-install Node.js / Rust / C++ tools ----
+REM  Everything portable goes under .tools\ next to this file (Node), or the
+REM  usual per-user locations (Rust -> %USERPROFILE%\.cargo). The Microsoft
+REM  C++ Build Tools need one UAC "Yes" click. No manual downloads required.
+set "TOOLS_DIR=%ROOT%.tools"
+if exist "%TOOLS_DIR%\path.txt" (
+    for /f "usebackq delims=" %%p in ("%TOOLS_DIR%\path.txt") do set "PATH=%%p;!PATH!"
+)
+if exist "%USERPROFILE%\.cargo\bin\cargo.exe" set "PATH=%USERPROFILE%\.cargo\bin;!PATH!"
+
+set "NEED_TOOLS="
+where node >nul 2>&1 || set "NEED_TOOLS=1"
+where cargo >nul 2>&1 || set "NEED_TOOLS=1"
+if defined NEED_TOOLS (
+    echo.
+    echo  ==^> No built app found. Installing the build toolchain automatically
+    echo      ^(Node.js, Rust, Microsoft C++ Build Tools^). First time only.
+    echo      This downloads a few GB and can take 10-20 minutes.
+    echo.
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%DESKTOP_DIR%\scripts\ensure-toolchain.ps1" -ToolsDir "%TOOLS_DIR%"
+    if errorlevel 1 (
+        echo.
+        echo  [ERROR] Automatic toolchain install failed - scroll up for details.
+        echo          Fix the issue ^(usually network or the UAC prompt was declined^)
+        echo          and double-click run.bat again. Already-installed parts are skipped.
+        echo.
+        pause
+        exit /b 1
+    )
+    if exist "%TOOLS_DIR%\path.txt" (
+        for /f "usebackq delims=" %%p in ("%TOOLS_DIR%\path.txt") do set "PATH=%%p;!PATH!"
+    )
+    if exist "%USERPROFILE%\.cargo\bin\cargo.exe" set "PATH=%USERPROFILE%\.cargo\bin;!PATH!"
+)
+where node >nul 2>&1
+if errorlevel 1 (
+    echo  [ERROR] Node.js is still not available on PATH after install. Reopen this window and retry.
+    pause
+    exit /b 1
+)
+where cargo >nul 2>&1
+if errorlevel 1 (
+    echo  [ERROR] Rust ^(cargo^) is still not available on PATH after install. Reopen this window and retry.
+    pause
+    exit /b 1
+)
+
+cd /d "%DESKTOP_DIR%"
+if not exist "node_modules" (
+    echo  ==^> Installing desktop UI dependencies ^(first run only^)...
+    call npm install --no-audit --no-fund
+    if errorlevel 1 (
+        echo.
+        echo  [ERROR] npm install failed - scroll up for details.
+        echo.
+        pause
+        exit /b 1
+    )
+)
+
+if not exist "src-tauri\target\release\psd-ai-desktop.exe" (
+    echo  ==^> Building the desktop app ^(first run only, a few minutes^)...
+    call npm run tauri build -- --no-bundle
+    if errorlevel 1 (
+        echo.
+        echo  [ERROR] Desktop app build failed - scroll up for details.
+        echo.
+        pause
+        exit /b 1
+    )
+)
+
+echo       Starting desktop\src-tauri\target\release\psd-ai-desktop.exe
+"%DESKTOP_DIR%\src-tauri\target\release\psd-ai-desktop.exe"
+
+:done
 echo.
-echo  psd.ai has stopped.
-pause
+echo  psd.ai has closed.
 endlocal
+exit /b 0
+
+REM ---------------- subroutines ----------------
+:verify_numpy
+REM returns errorlevel 0 if "import numpy" finishes within 20s, 1 otherwise
+if exist "venv\.np_ok" del /q "venv\.np_ok"
+start /b "" cmd /c ""%VENVPY%" -c "import numpy" >nul 2>&1 && echo ok> "venv\.np_ok""
+set /a _w=0
+:verify_numpy_wait
+if exist "venv\.np_ok" goto :verify_numpy_ok
+if %_w% geq 20 goto :verify_numpy_bad
+timeout /t 1 /nobreak >nul
+set /a _w+=1
+goto :verify_numpy_wait
+:verify_numpy_bad
+exit /b 1
+:verify_numpy_ok
+del /q "venv\.np_ok"
+exit /b 0

@@ -10,7 +10,6 @@ import os
 import hashlib
 import re
 import logging
-import numpy as np
 from typing import List, Dict, Any, Optional, Set
 
 from src.constants import CHROMA_DIR
@@ -116,6 +115,7 @@ class VectorRAG:
     def _embed(self, texts: List[str]) -> List[List[float]]:
         if not self._lanes:
             return []
+        import numpy as np  # lazy: see src/embeddings.py
         return np.array(self._lanes[0].encode(texts), dtype=np.float32).tolist()
 
     # ------------------------------------------------------------------
