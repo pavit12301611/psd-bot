@@ -94,6 +94,13 @@ def create_default_admin():
         print("  [skip] auth.json already exists")
         return "exists"
 
+    # Desktop app (run.bat / Tauri shell): the GUI shows its own first-run
+    # "create admin account" screen, so leave auth.json absent instead of
+    # inventing a random password nobody can see.
+    if os.getenv("PSD_AI_DEFER_ADMIN", "").strip().lower() in ("1", "true", "yes"):
+        print("  [skip] Admin account will be created in the desktop app on first launch")
+        return "deferred"
+
     try:
         import bcrypt
         import json
@@ -283,12 +290,14 @@ def main():
     # start-macos.sh launches the server itself (on its own port) right after
     # this, so suppress the manual hint there to avoid a contradictory URL.
     if not os.getenv("PSD_AI_SKIP_RUN_HINT"):
-        print(f"\nStart the server with:")
-        print(f"  python -m uvicorn app:app --host 127.0.0.1 --port 7000")
-        print(f"\nThen open http://localhost:7000")
+        print(f"\nLaunch the desktop app with run.bat (Windows) or, from desktop/:")
+        print(f"  npm run tauri dev")
+        print(f"\nHeadless / server use: python -m uvicorn app:app --host 127.0.0.1 --port 7000")
 
     # Cleaned, action-focused final instruction strings
-    if admin_status == "created":
+    if admin_status == "deferred":
+        print("Create your admin account in the psd.ai app window.\n")
+    elif admin_status == "created":
         print("Login with your admin credentials.\n")
     elif admin_status == "exists":
         print("Login with your existing admin credentials.\n")

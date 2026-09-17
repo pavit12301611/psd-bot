@@ -3,25 +3,30 @@ setlocal EnableExtensions EnableDelayedExpansion
 title psd.ai - Setup and Launch
 
 REM ==================================================================
-REM  psd.ai - one-click launcher for Windows
+REM  psd.ai - one-click launcher for Windows (desktop app)
 REM
 REM  Double-click this file and it will:
 REM    1. find Python 3.11+
 REM    2. create a virtual environment      (first run only)
 REM    3. install all dependencies          (first run only)
-REM    4. run setup - creates admin account (first run only)
+REM    4. run setup - creates data folders  (the app asks you to create
+REM       your admin account in its own window on first launch)
 REM    5. download + run a hardware-fit group of 3-5 local models
 REM       (first run only - a few GB per model, in a second window)
-REM    6. open http://localhost:7000 in your browser
-REM    7. start the server
+REM    6. open the psd.ai DESKTOP APP  (no browser, no localhost URL)
+REM
+REM  The desktop app is a native window (Tauri + React). It starts the
+REM  Python engine privately inside itself and talks to it over IPC.
+REM  Nothing is served on a public port and nothing opens in a browser.
 REM
 REM  Safe to re-run - steps already done are skipped, so later
 REM  launches start straight away. Keep this next to the psd.ai
-REM  folder. Press Ctrl+C in this window to stop the server.
+REM  folder. Close the app window to stop everything.
 REM ==================================================================
 
-set "APP_DIR=%~dp0psd.ai"
-set "PORT=7000"
+set "ROOT=%~dp0"
+set "APP_DIR=%ROOT%psd.ai"
+set "DESKTOP_DIR=%ROOT%desktop"
 REM Base port for the local model group, and how long to wait for a
 REM first-run model download before opening the app anyway. Override by
 REM setting these in the environment before double-clicking run.bat.
@@ -43,7 +48,7 @@ cd /d "%APP_DIR%"
 
 echo.
 echo  ============================================================
-echo    psd.ai  -  one-click setup + launch
+echo    psd.ai  -  one-click setup + launch  (desktop app)
 echo  ============================================================
 echo.
 
@@ -117,10 +122,13 @@ if not exist "venv\.deps_ok" (
 )
 
 REM ----------------------------------------------------------------
-REM  4. First-time setup (creates data folders, database and .env,
-REM     and asks you for an admin username + password on first run)
+REM  4. First-time setup (creates data folders, database and .env).
+REM     The admin account is created inside the desktop app's own
+REM     first-run screen, so the console prompt is skipped here.
 REM ----------------------------------------------------------------
 echo  ==^> Running setup...
+set "PSD_AI_DEFER_ADMIN=1"
+set "PSD_AI_SKIP_RUN_HINT=1"
 "%VENVPY%" setup.py
 if errorlevel 1 (
     echo.
@@ -153,20 +161,92 @@ if not defined PSD_NO_LOCAL_MODEL (
 )
 
 REM ----------------------------------------------------------------
-REM  6. Open the app in the browser a few seconds after the server
-REM     starts, then launch the server in this window
+REM  6. Launch the desktop app.
+REM
+REM     Preference order:
+REM       a) a built app:      desktop\src-tauri\target\release\psd-ai-desktop.exe
+REM       b) a portable copy:  desktop\psd.ai.exe   (drop a release build here)
+REM       c) developer mode:   `npm run tauri dev` inside desktop\
+REM          (needs Node.js + Rust; builds the app the first time)
+REM
+REM     The app spawns psd.ai\desktop_server.py itself on a private,
+REM     random loopback port and talks to it through IPC. Nothing is
+REM     opened in a browser and no fixed port is used.
 REM ----------------------------------------------------------------
 echo.
-echo  ==^> Starting psd.ai at http://localhost:%PORT%
-echo      The page will open automatically - press Ctrl+C here to stop.
+echo  ==^> Opening the psd.ai desktop app...
+echo      Close the app window to stop psd.ai.
 echo.
 
-set "APP_PORT=%PORT%"
-start "" /min cmd /c "timeout /t 5 /nobreak >nul & start http://localhost:%PORT%"
+set "PSD_AI_APP_DIR=%APP_DIR%"
+set "PSD_AI_PYTHON=%VENVPY%"
 
-"%VENVPY%" -m uvicorn app:app --host 127.0.0.1 --port %PORT%
+set "APP_EXE="
+if exist "%DESKTOP_DIR%\src-tauri\target\release\psd-ai-desktop.exe" set "APP_EXE=%DESKTOP_DIR%\src-tauri\target\release\psd-ai-desktop.exe"
+if not defined APP_EXE if exist "%DESKTOP_DIR%\psd.ai.exe" set "APP_EXE=%DESKTOP_DIR%\psd.ai.exe"
+if not defined APP_EXE if exist "%ROOT%psd.ai.exe" set "APP_EXE=%ROOT%psd.ai.exe"
 
+if defined APP_EXE (
+    echo       Using %APP_EXE%
+    "%APP_EXE%"
+    goto :done
+)
+
+REM ---- developer fallback: build + run the Tauri app from source ----
+where node >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo  [ERROR] No built psd.ai desktop app was found and Node.js is not installed.
+    echo.
+    echo  Either:
+    echo    - place a release build at  desktop\psd.ai.exe   ^(see desktop\README.md^), or
+    echo    - install Node.js LTS ^(https://nodejs.org^) and Rust ^(https://rustup.rs^),
+    echo      then double-click run.bat again to build the app from source.
+    echo.
+    pause
+    exit /b 1
+)
+where cargo >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo  [ERROR] No built psd.ai desktop app was found and Rust ^(cargo^) is not installed.
+    echo.
+    echo  Install Rust from https://rustup.rs ^(default options^), reopen this window,
+    echo  and double-click run.bat again. The first build takes a few minutes.
+    echo.
+    pause
+    exit /b 1
+)
+
+cd /d "%DESKTOP_DIR%"
+if not exist "node_modules" (
+    echo  ==^> Installing desktop UI dependencies ^(first run only^)...
+    call npm install --no-audit --no-fund
+    if errorlevel 1 (
+        echo.
+        echo  [ERROR] npm install failed - scroll up for details.
+        echo.
+        pause
+        exit /b 1
+    )
+)
+
+if not exist "src-tauri\target\release\psd-ai-desktop.exe" (
+    echo  ==^> Building the desktop app ^(first run only, a few minutes^)...
+    call npm run tauri build -- --no-bundle
+    if errorlevel 1 (
+        echo.
+        echo  [ERROR] Desktop app build failed - scroll up for details.
+        echo.
+        pause
+        exit /b 1
+    )
+)
+
+echo       Starting desktop\src-tauri\target\release\psd-ai-desktop.exe
+"%DESKTOP_DIR%\src-tauri\target\release\psd-ai-desktop.exe"
+
+:done
 echo.
-echo  psd.ai has stopped.
-pause
+echo  psd.ai has closed.
 endlocal

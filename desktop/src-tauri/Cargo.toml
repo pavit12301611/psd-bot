@@ -1,0 +1,30 @@
+[package]
+name = "psd-ai-desktop"
+version = "1.0.0"
+description = "psd.ai desktop application"
+authors = ["psd.ai"]
+edition = "2021"
+
+[lib]
+name = "psd_ai_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "multipart", "cookies"] }
+tokio = { version = "1", features = ["full"] }
+futures-util = "0.3"
+base64 = "0.22"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

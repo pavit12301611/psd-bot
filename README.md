@@ -1,6 +1,11 @@
 # psd-bot
 
-The project lives in the **`psd.ai/`** folder.
+The backend lives in the **`psd.ai/`** folder; the desktop application lives in
+**`desktop/`** (Tauri 2 + React/Vite + Tailwind).
+
+psd.ai is a **desktop app**. There is no browser tab and no `localhost` URL to
+open — the app window starts the Python engine privately inside itself and
+talks to it over local IPC (see [`desktop/README.md`](desktop/README.md)).
 
 ## Run it on Windows
 
@@ -8,12 +13,15 @@ Double-click **`run.bat`** — that's it. It will:
 
 1. find Python 3.11+
 2. create a virtual environment & install dependencies (first run only)
-3. run first-time setup — you'll be asked for an admin username & password
+3. run first-time setup (data folders, database, `.env`)
 4. **download and run a hardware-fit group of 3 to 5 local models** (first run only)
-5. open <http://localhost:7000> in your browser
-6. start the server
+5. **open the psd.ai desktop app** — on the very first launch it asks you to
+   create your admin account right in the window
 
-After that, re-running `run.bat` just starts the app. Press `Ctrl+C` in its window to stop.
+`run.bat` uses a prebuilt app if one is present (`desktop\psd.ai.exe` or
+`desktop\src-tauri\target\release\psd-ai-desktop.exe`); otherwise, if Node.js and
+Rust are installed, it builds the app from source the first time. After that,
+re-running `run.bat` just opens the app. Close the window to stop.
 
 ## The local AI model group
 
@@ -81,11 +89,24 @@ not already chosen one, so an existing setup is never overwritten.
 | run `python scripts\local_llama.py --single-model` | use the legacy one-model mode |
 
 If the download or the GPU start fails, psd.ai still opens — the failure is
-reported in that window and you can add a model under **Settings → Models**.
+reported in that window and you can add a model under **Settings → Models**
+inside the app.
+
+## Desktop app (all platforms)
+
+```bash
+cd desktop
+npm install
+npm run tauri dev      # run
+npm run tauri build    # installers (.exe/.msi, .dmg, .deb/.AppImage)
+```
+
+Requires Node.js 18+ and Rust; see [`desktop/README.md`](desktop/README.md).
 
 ## Branding
 
-The app is presented as **psd.ai** everywhere it is visible in a browser: the tab
-title, the login page, the sidebar, the welcome screen, and the PWA install name.
+The app is presented as **psd.ai** everywhere: the window title, the setup and
+login screens, the sidebar and the welcome screen.
 
-Full manual instructions (Linux/macOS/Docker) are in [`psd.ai/README.md`](psd.ai/README.md) and [`psd.ai/website/setup.md`](psd.ai/website/setup.md).
+Headless / server / Docker instructions for the backend alone are in
+[`psd.ai/README.md`](psd.ai/README.md) and [`psd.ai/website/setup.md`](psd.ai/website/setup.md).
