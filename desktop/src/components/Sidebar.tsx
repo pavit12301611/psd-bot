@@ -28,7 +28,9 @@ export default function Sidebar() {
   const logout = useApp((s) => s.logout);
   const user = useApp((s) => s.authStatus?.username);
   const streaming = useApp((s) => s.streaming);
-  const important = useApp((s) => s.sessions.filter((x) => x.is_important && !x.archived));
+  // Filter in useMemo, not the zustand selector — a new array every snapshot
+  // makes useSyncExternalStore loop ("Maximum update depth exceeded").
+  const important = useMemo(() => sessions.filter((x) => x.is_important && !x.archived), [sessions]);
   const [q, setQ] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");

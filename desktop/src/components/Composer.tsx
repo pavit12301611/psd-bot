@@ -32,7 +32,19 @@ export default function Composer() {
   const fileInput = useRef<HTMLInputElement>(null);
   const recRef = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
-  const { send, stop, streaming, mode, setMode, web, toggleWeb, bash, toggleBash, rag, toggleRag, activeSessionId, toast } = useApp();
+  const send = useApp((s) => s.send);
+  const stop = useApp((s) => s.stop);
+  const streaming = useApp((s) => s.streaming);
+  const mode = useApp((s) => s.mode);
+  const setMode = useApp((s) => s.setMode);
+  const web = useApp((s) => s.web);
+  const toggleWeb = useApp((s) => s.toggleWeb);
+  const bash = useApp((s) => s.bash);
+  const toggleBash = useApp((s) => s.toggleBash);
+  const rag = useApp((s) => s.rag);
+  const toggleRag = useApp((s) => s.toggleRag);
+  const activeSessionId = useApp((s) => s.activeSessionId);
+  const toast = useApp((s) => s.toast);
 
   useEffect(() => {
     const el = ta.current;

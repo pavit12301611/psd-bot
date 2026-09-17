@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Download,
   HardDrive,
@@ -133,9 +133,12 @@ export default function ModelsHub() {
   const live = jobs.filter((j) => j.status === "running" || j.status === "ready" || j.status === "queued");
   const doneJobs = jobs.filter((j) => j.status === "completed" || j.status === "done");
 
+  const doneCount = doneJobs.length;
+  const prevDone = useRef(0);
   useEffect(() => {
-    if (doneJobs.length) loadModels(true).catch(() => {});
-  }, [doneJobs.length, loadModels]);
+    if (doneCount > prevDone.current) loadModels(true).catch(() => {});
+    prevDone.current = doneCount;
+  }, [doneCount, loadModels]);
 
   const startDownload = async (opts: { repo_id: string; backend?: "hf" | "ollama"; include?: string; required_gb?: number }) => {
     if (!isAdmin) {
