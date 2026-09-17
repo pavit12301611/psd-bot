@@ -115,10 +115,22 @@ export async function api<T = any>(req: ApiRequest): Promise<T> {
 export const get = <T = any>(path: string) => api<T>({ method: "GET", path });
 export const postJson = <T = any>(path: string, json: unknown) => api<T>({ method: "POST", path, json });
 export const putJson = <T = any>(path: string, json: unknown) => api<T>({ method: "PUT", path, json });
+export const patchJson = <T = any>(path: string, json: unknown) => api<T>({ method: "PATCH", path, json });
 export const postForm = <T = any>(path: string, form: Record<string, string>, files?: FilePart[]) =>
   api<T>({ method: "POST", path, form, files });
 export const patchForm = <T = any>(path: string, form: Record<string, string>) => api<T>({ method: "PATCH", path, form });
 export const del = <T = any>(path: string) => api<T>({ method: "DELETE", path });
+
+/** Build a query string, skipping empty values. */
+export function qs(params: Record<string, string | number | boolean | undefined | null>): string {
+  const u = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined || v === null || v === "") continue;
+    u.set(k, String(v));
+  }
+  const s = u.toString();
+  return s ? `?${s}` : "";
+}
 
 // ------------------------------------------------------------------
 // Streaming (SSE) – forwarded as Tauri events by the Rust side.

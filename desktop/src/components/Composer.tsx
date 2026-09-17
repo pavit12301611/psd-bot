@@ -1,16 +1,38 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUp, Square, Paperclip, Globe, Terminal, MessageSquare, Bot, X } from "lucide-react";
+import { ArrowUp, Square, Paperclip, Globe, Terminal, MessageSquare, Bot, X, Mic, Database, Slash } from "lucide-react";
 import { useApp } from "../store/app";
-import { uploads } from "../lib/api";
+import { uploads, voice } from "../lib/api";
+
+const SLASH: { token: string; label: string; run: (app: ReturnType<typeof useApp.getState>) => void }[] = [
+  { token: "/models", label: "Open Models", run: (a) => a.setView("models") },
+  { token: "/notes", label: "Open Notes", run: (a) => a.setView("notes") },
+  { token: "/tasks", label: "Open Tasks", run: (a) => a.setView("tasks") },
+  { token: "/calendar", label: "Open Calendar", run: (a) => a.setView("calendar") },
+  { token: "/memory", label: "Open Brain", run: (a) => a.setView("memory") },
+  { token: "/research", label: "Open Research", run: (a) => a.setView("research") },
+  { token: "/gallery", label: "Open Gallery", run: (a) => a.setView("gallery") },
+  { token: "/library", label: "Open Library", run: (a) => a.setView("library") },
+  { token: "/email", label: "Open Email", run: (a) => a.setView("email") },
+  { token: "/compare", label: "Open Compare", run: (a) => a.setView("compare") },
+  { token: "/settings", label: "Open Settings", run: (a) => a.setSettings(true) },
+  { token: "/new", label: "New chat", run: (a) => a.newChat() },
+  { token: "/web", label: "Toggle web search", run: (a) => a.toggleWeb() },
+  { token: "/agent", label: "Switch to agent mode", run: (a) => a.setMode("agent") },
+  { token: "/chat", label: "Switch to chat mode", run: (a) => a.setMode("chat") },
+];
 
 export default function Composer() {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<{ id: string; name: string }[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [slashOpen, setSlashOpen] = useState(false);
   const ta = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const { send, stop, streaming, mode, setMode, web, toggleWeb, bash, toggleBash, activeSessionId, toast } = useApp();
+  const recRef = useRef<MediaRecorder | null>(null);
+  const chunks = useRef<Blob[]>([]);
+  const { send, stop, streaming, mode, setMode, web, toggleWeb, bash, toggleBash, rag, toggleRag, activeSessionId, toast } = useApp();
 
   useEffect(() => {
     const el = ta.current;
@@ -23,9 +45,25 @@ export default function Composer() {
     ta.current?.focus();
   }, [activeSessionId]);
 
+  const slashHits = text.startsWith("/")
+    ? SLASH.filter((s) => s.token.startsWith(text.split(/\s/)[0].toLowerCase()))
+    : [];
+
+  useEffect(() => {
+    setSlashOpen(slashHits.length > 0 && !text.includes(" "));
+  }, [text, slashHits.length]);
+
   const submit = () => {
     if (streaming) return;
     const t = text.trim();
+    if (t.startsWith("/") && !t.includes(" ")) {
+      const hit = SLASH.find((s) => s.token === t.toLowerCase());
+      if (hit) {
+        hit.run(useApp.getState());
+        setText("");
+        return;
+      }
+    }
     if (!t && !files.length) return;
     send(t, files);
     setText("");
@@ -33,6 +71,13 @@ export default function Composer() {
   };
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slashOpen && (e.key === "Tab" || e.key === "Enter") && slashHits[0]) {
+      e.preventDefault();
+      slashHits[0].run(useApp.getState());
+      setText("");
+      setSlashOpen(false);
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       submit();
@@ -55,6 +100,38 @@ export default function Composer() {
     }
   };
 
+  const toggleMic = async () => {
+    if (recording) {
+      recRef.current?.stop();
+      setRecording(false);
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream);
+      chunks.current = [];
+      rec.ondataavailable = (e) => e.data.size && chunks.current.push(e.data);
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(chunks.current, { type: rec.mimeType || "audio/webm" });
+        const file = new File([blob], "voice.webm", { type: blob.type });
+        try {
+          const r = await voice.transcribe(file);
+          const spoken = (r.text || r.transcript || "").trim();
+          if (spoken) setText((t) => (t ? t + " " + spoken : spoken));
+          else toast("Nothing transcribed", "info");
+        } catch (e: any) {
+          toast(e.message || "Voice input failed", "error");
+        }
+      };
+      recRef.current = rec;
+      rec.start();
+      setRecording(true);
+    } catch (e: any) {
+      toast(e.message || "Microphone unavailable", "error");
+    }
+  };
+
   return (
     <div className="relative z-10 px-4 pb-4 pt-2">
       <motion.div layout className="glass mx-auto max-w-3xl rounded-[26px] p-2" style={{ boxShadow: "var(--shadow)" }} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); pick(e.dataTransfer.files); }}>
@@ -73,11 +150,32 @@ export default function Composer() {
           )}
         </AnimatePresence>
 
+        {slashOpen && (
+          <div className="mb-1 overflow-hidden rounded-2xl" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+            {slashHits.slice(0, 6).map((s) => (
+              <button
+                key={s.token}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] hover:bg-[var(--accent-soft)]"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  s.run(useApp.getState());
+                  setText("");
+                  setSlashOpen(false);
+                }}
+              >
+                <Slash size={12} style={{ color: "var(--muted)" }} />
+                <span className="font-medium">{s.token}</span>
+                <span style={{ color: "var(--muted)" }}>{s.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         <textarea
           ref={ta}
           rows={1}
           className="selectable block w-full resize-none bg-transparent px-3 py-2.5 text-[15px] leading-relaxed outline-none placeholder:text-[var(--muted)]"
-          placeholder={mode === "agent" ? "Give the agent a task…" : "Message psd.ai…"}
+          placeholder={mode === "agent" ? "Give the agent a task…  (/ for commands)" : "Message psd.ai…  (/ for commands)"}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKey}
@@ -87,6 +185,9 @@ export default function Composer() {
           <input ref={fileInput} type="file" multiple hidden onChange={(e) => pick(e.target.files)} />
           <button className="icon-btn" title="Attach files" onClick={() => fileInput.current?.click()} disabled={uploading}>
             <Paperclip size={16} className={uploading ? "animate-pulse" : ""} />
+          </button>
+          <button className="icon-btn" title={recording ? "Stop recording" : "Voice input"} onClick={toggleMic}>
+            <Mic size={16} className={recording ? "animate-pulse" : ""} style={{ color: recording ? "var(--accent)" : undefined }} />
           </button>
 
           <div className="ml-1 flex rounded-full p-0.5" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
@@ -106,6 +207,9 @@ export default function Composer() {
           </button>
           <button className="pill" data-on={bash} onClick={toggleBash} title="Allow shell commands (agent)">
             <Terminal size={12} /> Shell
+          </button>
+          <button className="pill" data-on={rag} onClick={toggleRag} title="Retrieve from your documents">
+            <Database size={12} /> RAG
           </button>
 
           <div className="flex-1" />
@@ -135,7 +239,7 @@ export default function Composer() {
         </div>
       </motion.div>
       <p className="mt-2 text-center text-[11px]" style={{ color: "var(--muted)" }}>
-        Enter to send · Shift+Enter for a new line · Runs entirely on your device
+        Enter to send · / for commands · Shift+Enter for a new line · Runs on your device
       </p>
     </div>
   );

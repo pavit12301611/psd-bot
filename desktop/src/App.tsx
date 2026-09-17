@@ -1,13 +1,26 @@
 import { useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { X } from "lucide-react";
-import { useApp } from "./store/app";
+import { useApp, type AppView } from "./store/app";
 import TitleBar from "./components/TitleBar";
 import Boot from "./components/Boot";
 import Auth from "./components/Auth";
 import Sidebar from "./components/Sidebar";
 import Chat from "./components/Chat";
 import Settings from "./components/Settings";
+import NavRail from "./components/NavRail";
+import CommandPalette from "./components/CommandPalette";
+import Shortcuts from "./components/Shortcuts";
+import Notes from "./components/Notes";
+import Tasks from "./components/Tasks";
+import CalendarView from "./components/CalendarView";
+import Memory from "./components/Memory";
+import Gallery from "./components/Gallery";
+import Library from "./components/Library";
+import Research from "./components/Research";
+import Compare from "./components/Compare";
+import Email from "./components/Email";
+import ModelsHub from "./components/ModelsHub";
 import { inTauri, onBackendStatus } from "./lib/ipc";
 
 function Toasts() {
@@ -32,8 +45,6 @@ function Toasts() {
 export default function App() {
   const screen = useApp((s) => s.screen);
 
-  // If the engine dies (or is restarted) mid-session, drop back to the boot
-  // screen; <Boot/> re-runs the auth check once the sidecar is ready again.
   useEffect(
     () =>
       onBackendStatus((s) => {
@@ -42,7 +53,6 @@ export default function App() {
     [],
   );
 
-  // Disable the WebView's default context menu / drag-drop navigation.
   useEffect(() => {
     if (!inTauri) return;
     const stop = (e: Event) => {
@@ -58,6 +68,61 @@ export default function App() {
       document.removeEventListener("dragover", stop);
       document.removeEventListener("drop", stop);
     };
+  }, []);
+
+  useEffect(() => {
+    const isTyping = (el: EventTarget | null) => {
+      const t = el as HTMLElement | null;
+      if (!t) return false;
+      const tag = t.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || t.isContentEditable;
+    };
+    const onKey = (e: KeyboardEvent) => {
+      const meta = e.metaKey || e.ctrlKey;
+      const st = useApp.getState();
+      if (meta && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        st.setPalette(!st.paletteOpen);
+        return;
+      }
+      if (meta && e.key.toLowerCase() === "n") {
+        e.preventDefault();
+        st.newChat();
+        return;
+      }
+      if (meta && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        st.setSidebar(!st.sidebarOpen);
+        return;
+      }
+      if (meta && e.key === ",") {
+        e.preventDefault();
+        st.setSettings(!st.settingsOpen);
+        return;
+      }
+      if (meta && e.shiftKey && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        st.setMode(st.mode === "agent" ? "chat" : "agent");
+        return;
+      }
+      if (meta && e.shiftKey && e.key.toLowerCase() === "w") {
+        e.preventDefault();
+        st.toggleWeb();
+        return;
+      }
+      if (e.key === "Escape") {
+        if (st.shortcutsOpen) return st.setShortcuts(false);
+        if (st.paletteOpen) return st.setPalette(false);
+        if (st.settingsOpen) return st.setSettings(false);
+        if (st.streaming) return st.stop();
+      }
+      if (e.key === "?" && !isTyping(e.target) && !meta) {
+        e.preventDefault();
+        st.setShortcuts(!st.shortcutsOpen);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   return (
@@ -83,6 +148,8 @@ export default function App() {
           )}
         </AnimatePresence>
         <Settings />
+        <CommandPalette />
+        <Shortcuts />
         <Toasts />
       </main>
     </div>
@@ -91,16 +158,55 @@ export default function App() {
 
 function Workspace() {
   const sidebarOpen = useApp((s) => s.sidebarOpen);
+  const view = useApp((s) => s.view);
+  const offline = useApp((s) => s.engineOffline);
   return (
     <>
-      <AnimatePresence initial={false}>
-        {sidebarOpen && (
-          <motion.div key="sb" className="relative z-10 h-full overflow-hidden" initial={{ width: 0, opacity: 0 }} animate={{ width: 272, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={{ type: "spring", stiffness: 380, damping: 36 }}>
-            <Sidebar />
-          </motion.div>
+      <NavRail />
+      {view === "chat" && (
+        <AnimatePresence initial={false}>
+          {sidebarOpen && (
+            <motion.div key="sb" className="relative z-10 h-full overflow-hidden" initial={{ width: 0, opacity: 0 }} animate={{ width: 272, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={{ type: "spring", stiffness: 380, damping: 36 }}>
+              <Sidebar />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      )}
+      <div className="relative flex min-w-0 flex-1 flex-col">
+        {offline && (
+          <div className="z-20 px-4 py-1.5 text-center text-[12px]" style={{ background: "var(--accent-soft)", color: "var(--accent)", borderBottom: "1px solid var(--border)" }}>
+            Engine isn’t connected — the full interface is still here. Start the local backend to load your data.
+          </div>
         )}
-      </AnimatePresence>
-      <Chat />
+        <Feature view={view} />
+      </div>
     </>
   );
+}
+
+function Feature({ view }: { view: AppView }) {
+  switch (view) {
+    case "models":
+      return <ModelsHub />;
+    case "notes":
+      return <Notes />;
+    case "tasks":
+      return <Tasks />;
+    case "calendar":
+      return <CalendarView />;
+    case "memory":
+      return <Memory />;
+    case "gallery":
+      return <Gallery />;
+    case "library":
+      return <Library />;
+    case "research":
+      return <Research />;
+    case "compare":
+      return <Compare />;
+    case "email":
+      return <Email />;
+    default:
+      return <Chat />;
+  }
 }

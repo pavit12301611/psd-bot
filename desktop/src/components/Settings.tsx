@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { X, Server, KeyRound, Info, Plus, Trash2, RefreshCw, Sun, Moon, TerminalSquare } from "lucide-react";
+import { X, Server, KeyRound, Info, Plus, Trash2, RefreshCw, Sun, Moon, TerminalSquare, Search, Keyboard, HardDrive } from "lucide-react";
 import { useApp } from "../store/app";
-import { auth, endpoints as epApi, type Endpoint } from "../lib/api";
+import { auth, endpoints as epApi, search as searchApi, type Endpoint } from "../lib/api";
 import { backendStatus, inTauri, restartBackend } from "../lib/ipc";
 
-type Tab = "models" | "account" | "engine" | "about";
+type Tab = "models" | "search" | "account" | "engine" | "about";
 
 export default function Settings() {
   const open = useApp((s) => s.settingsOpen);
@@ -22,6 +22,7 @@ export default function Settings() {
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: "models", label: "Models", icon: <Server size={15} /> },
+    { id: "search", label: "Search", icon: <Search size={15} /> },
     { id: "account", label: "Account", icon: <KeyRound size={15} /> },
     { id: "engine", label: "Engine", icon: <TerminalSquare size={15} /> },
     { id: "about", label: "About", icon: <Info size={15} /> },
@@ -49,6 +50,7 @@ export default function Settings() {
               </button>
               <div className="flex-1 overflow-y-auto p-6">
                 {tab === "models" && <ModelsTab isAdmin={!!isAdmin} />}
+                {tab === "search" && <SearchTab />}
                 {tab === "account" && <AccountTab />}
                 {tab === "engine" && <EngineTab />}
                 {tab === "about" && <AboutTab />}
@@ -84,6 +86,10 @@ function ModelsTab({ isAdmin }: { isAdmin: boolean }) {
   const [err, setErr] = useState<string | null>(null);
   const loadModels = useApp((s) => s.loadModels);
   const toast = useApp((s) => s.toast);
+  const openHub = () => {
+    useApp.getState().setSettings(false);
+    useApp.getState().setView("models");
+  };
 
   const refresh = () => {
     if (!isAdmin) return;
@@ -112,12 +118,19 @@ function ModelsTab({ isAdmin }: { isAdmin: boolean }) {
   if (!isAdmin)
     return (
       <Section title="Models" desc="Only an administrator can manage model endpoints. Ask your admin to add one, then pick it from the model menu.">
-        <></>
+        <button className="btn" onClick={openHub}>
+          <HardDrive size={15} /> Browse the Models hub
+        </button>
       </Section>
     );
 
   return (
     <>
+      <Section title="Download models" desc="Pull a Hugging Face repo or an Ollama tag, then serve it so it appears in the chat picker.">
+        <button className="btn btn-primary" onClick={openHub}>
+          <HardDrive size={15} /> Open Models hub
+        </button>
+      </Section>
       <Section title="Model endpoints" desc="Any OpenAI-compatible server: llama.cpp, Ollama, vLLM, LM Studio, or a cloud API key.">
         <div className="flex flex-col gap-2">
           {list === null && <div className="shimmer h-12 rounded-xl" style={{ background: "var(--bg-sunken)" }} />}
@@ -166,6 +179,68 @@ function ModelsTab({ isAdmin }: { isAdmin: boolean }) {
             </button>
           </div>
         </div>
+      </Section>
+    </>
+  );
+}
+
+function SearchTab() {
+  const [providers, setProviders] = useState<{ id: string; label: string; available: boolean }[]>([]);
+  const [query, setQuery] = useState("");
+  const [hits, setHits] = useState<any[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const toast = useApp((s) => s.toast);
+
+  useEffect(() => {
+    searchApi
+      .providers()
+      .then((r) => setProviders(Array.isArray(r) ? r : (r as any).providers || []))
+      .catch(() => setProviders([]));
+  }, []);
+
+  const run = async () => {
+    if (!query.trim()) return;
+    setBusy(true);
+    try {
+      const r = await searchApi.web(query.trim());
+      setHits(r.sources || []);
+      if (r.error) toast(r.error, "error");
+    } catch (e: any) {
+      toast(e.message || "Search failed", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Section title="Web search providers" desc="Used by the Web toggle in chat and by Deep Research.">
+        <div className="flex flex-col gap-1.5">
+          {providers.length === 0 && <p className="text-[13px]" style={{ color: "var(--muted)" }}>No provider list yet. DuckDuckGo works without a key.</p>}
+          {providers.map((p) => (
+            <div key={p.id} className="flex items-center gap-2 rounded-xl px-3 py-2" style={{ border: "1px solid var(--border)" }}>
+              <span className="h-2 w-2 rounded-full" style={{ background: p.available ? "#34d399" : "#f87171" }} />
+              <span className="text-[13px]">{p.label || p.id}</span>
+              <span className="ml-auto text-[11px]" style={{ color: "var(--muted)" }}>{p.available ? "ready" : "needs setup"}</span>
+            </div>
+          ))}
+        </div>
+      </Section>
+      <Section title="Test a query">
+        <div className="flex gap-2">
+          <input className="input" placeholder="Search the web…" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && run()} />
+          <button className="btn btn-primary" disabled={!query.trim() || busy} onClick={run}>Search</button>
+        </div>
+        {hits && (
+          <ul className="mt-3 flex flex-col gap-1.5">
+            {hits.length === 0 && <li className="text-[13px]" style={{ color: "var(--muted)" }}>No results</li>}
+            {hits.slice(0, 8).map((h, i) => (
+              <li key={i} className="truncate text-[13px]">
+                <a className="hover:underline" style={{ color: "var(--accent)" }} href={h.url} onClick={(e) => { e.preventDefault(); if (h.url) window.open(h.url, "_blank"); }}>{h.title || h.url}</a>
+              </li>
+            ))}
+          </ul>
+        )}
       </Section>
     </>
   );
@@ -252,6 +327,8 @@ function EngineTab() {
 
 function AboutTab() {
   const version = useApp((s) => s.version);
+  const setShortcuts = useApp((s) => s.setShortcuts);
+  const close = () => useApp.getState().setSettings(false);
   return (
     <Section title="psd.ai" desc="A private, local-first AI assistant.">
       <div className="flex flex-col gap-1 text-[13px]" style={{ color: "var(--muted)" }}>
@@ -259,6 +336,9 @@ function AboutTab() {
         <div>Shell: Tauri 2 · React · Vite · Tailwind</div>
         <div>All data and models stay on this computer.</div>
       </div>
+      <button className="btn mt-4" onClick={() => { close(); setShortcuts(true); }}>
+        <Keyboard size={15} /> Keyboard shortcuts
+      </button>
     </Section>
   );
 }

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ChevronDown, Cpu, Cloud, RefreshCw, Check, Search } from "lucide-react";
+import { ChevronDown, Cpu, Cloud, RefreshCw, Check, Search, HardDrive } from "lucide-react";
 import { useApp } from "../store/app";
 
 export default function ModelPicker() {
   const items = useApp((s) => s.modelItems);
   const route = useApp((s) => s.route);
-  const setRoute = useApp((s) => s.setRoute);
+  const selectModel = useApp((s) => s.selectModel);
+  const setView = useApp((s) => s.setView);
   const loadModels = useApp((s) => s.loadModels);
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -73,7 +74,7 @@ export default function ModelPicker() {
             <div className="max-h-[360px] overflow-y-auto p-1.5">
               {groups.length === 0 && (
                 <div className="px-3 py-6 text-center text-sm" style={{ color: "var(--muted)" }}>
-                  No models found. Add an endpoint in Settings, or wait for the local model group to finish downloading.
+                  No models found. Download one from Models, or add an endpoint in Settings.
                 </div>
               )}
               {groups.map(({ item, models }) => (
@@ -91,7 +92,7 @@ export default function ModelPicker() {
                         className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] transition-colors hover:bg-[var(--accent-soft)]"
                         style={{ background: on ? "var(--accent-soft)" : undefined, opacity: item.offline ? 0.5 : 1 }}
                         onClick={() => {
-                          setRoute({ model: m, endpoint_id: item.endpoint_id || "", endpoint_url: item.url, endpoint_name: item.endpoint_name });
+                          selectModel({ model: m, endpoint_id: item.endpoint_id || "", endpoint_url: item.url, endpoint_name: item.endpoint_name });
                           setOpen(false);
                         }}
                       >
@@ -102,6 +103,18 @@ export default function ModelPicker() {
                   })}
                 </div>
               ))}
+            </div>
+            <div className="p-1.5" style={{ borderTop: "1px solid var(--border)" }}>
+              <button
+                className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] transition-colors hover:bg-[var(--accent-soft)]"
+                onClick={() => {
+                  setView("models");
+                  setOpen(false);
+                }}
+              >
+                <HardDrive size={14} style={{ color: "var(--accent)" }} />
+                Download or serve a model
+              </button>
             </div>
           </motion.div>
         )}

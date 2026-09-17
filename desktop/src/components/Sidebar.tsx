@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Plus, Search, MessageSquare, Trash2, Pencil, Settings, LogOut, Check, X } from "lucide-react";
-import { useApp } from "../store/app";
+import { Plus, Search, MessageSquare, Trash2, Pencil, Settings, LogOut, Check, X, HardDrive, StickyNote, ListTodo, CalendarDays, Brain, Images, Library, Telescope, Columns2, Mail, Star } from "lucide-react";
+import { useApp, type AppView } from "../store/app";
 
 function groupLabel(ts?: string) {
   if (!ts) return "Older";
@@ -23,9 +23,12 @@ export default function Sidebar() {
   const remove = useApp((s) => s.deleteSession);
   const rename = useApp((s) => s.renameSession);
   const setSettings = useApp((s) => s.setSettings);
+  const setPalette = useApp((s) => s.setPalette);
+  const setView = useApp((s) => s.setView);
   const logout = useApp((s) => s.logout);
   const user = useApp((s) => s.authStatus?.username);
   const streaming = useApp((s) => s.streaming);
+  const important = useApp((s) => s.sessions.filter((x) => x.is_important && !x.archived));
   const [q, setQ] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -50,13 +53,54 @@ export default function Sidebar() {
         <button className="btn btn-primary h-10 w-full justify-start" onClick={newChat} disabled={streaming}>
           <Plus size={16} /> New chat
         </button>
+        <button className="btn h-9 w-full justify-start text-[13px]" onClick={() => setPalette(true)}>
+          <Search size={14} /> Search
+          <kbd className="ml-auto rounded px-1.5 py-0.5 text-[10px]" style={{ background: "var(--bg-sunken)", color: "var(--muted)" }}>⌘K</kbd>
+        </button>
         <div className="relative">
           <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--muted)" }} />
-          <input className="input h-9 pl-9 text-[13px]" placeholder="Search chats" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input className="input h-9 pl-9 text-[13px]" placeholder="Filter chats" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+      </div>
+
+      <div className="px-2 pb-2">
+        <div className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--muted)" }}>
+          Tools
+        </div>
+        <div className="grid grid-cols-2 gap-0.5">
+          {([
+            ["models", HardDrive, "Models"],
+            ["notes", StickyNote, "Notes"],
+            ["tasks", ListTodo, "Tasks"],
+            ["calendar", CalendarDays, "Calendar"],
+            ["memory", Brain, "Brain"],
+            ["gallery", Images, "Gallery"],
+            ["library", Library, "Library"],
+            ["research", Telescope, "Research"],
+            ["compare", Columns2, "Compare"],
+            ["email", Mail, "Email"],
+          ] as [AppView, typeof StickyNote, string][]).map(([id, Icon, label]) => (
+            <button key={id} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left text-[12px] hover:bg-[var(--accent-soft)]" style={{ color: "var(--muted)" }} onClick={() => setView(id)}>
+              <Icon size={13} /> {label}
+            </button>
+          ))}
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 pb-2">
+        {important.length > 0 && !q && (
+          <div className="mb-2">
+            <div className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--muted)" }}>
+              Starred
+            </div>
+            {important.map((s) => (
+              <button key={s.id} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[13px] hover:bg-[var(--accent-soft)]" onClick={() => select(s.id)}>
+                <Star size={12} style={{ color: "var(--accent)" }} fill="currentColor" />
+                <span className="truncate">{s.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
         {groups.length === 0 && (
           <div className="mt-10 flex flex-col items-center gap-2 text-center text-sm" style={{ color: "var(--muted)" }}>
             <MessageSquare size={26} strokeWidth={1.5} />

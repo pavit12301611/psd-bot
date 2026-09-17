@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowDown, Sparkles, Code2, Lightbulb, PenLine } from "lucide-react";
+import { ArrowDown, Sparkles, Code2, Lightbulb, PenLine, HardDrive, StickyNote, ListTodo, CalendarDays, Telescope, Copy, Trash2, Download, Star, MoreHorizontal, EyeOff } from "lucide-react";
 import { useApp, type Message } from "../store/app";
+import { sessions as sessionsApi } from "../lib/api";
 import MessageView from "./Message";
 import Composer from "./Composer";
 import ModelPicker from "./ModelPicker";
@@ -18,6 +19,14 @@ const SUGGESTIONS = [
   { icon: <PenLine size={15} />, title: "Draft an email", text: "Draft a polite email asking my professor for a deadline extension." },
 ];
 
+const QUICK: { icon: React.ReactNode; title: string; view: "notes" | "tasks" | "calendar" | "research" | "models" }[] = [
+  { icon: <HardDrive size={15} />, title: "Models", view: "models" },
+  { icon: <StickyNote size={15} />, title: "Notes", view: "notes" },
+  { icon: <ListTodo size={15} />, title: "Tasks", view: "tasks" },
+  { icon: <CalendarDays size={15} />, title: "Calendar", view: "calendar" },
+  { icon: <Telescope size={15} />, title: "Research", view: "research" },
+];
+
 export default function Chat() {
   const sid = useApp((s) => s.activeSessionId);
   const messages = useApp((s) => (s.activeSessionId ? s.messages[s.activeSessionId] || NO_MESSAGES : NO_MESSAGES));
@@ -25,8 +34,14 @@ export default function Chat() {
   const send = useApp((s) => s.send);
   const session = useApp((s) => s.sessions.find((x) => x.id === s.activeSessionId));
   const user = useApp((s) => s.authStatus?.username);
+  const setView = useApp((s) => s.setView);
+  const deleteSession = useApp((s) => s.deleteSession);
+  const toast = useApp((s) => s.toast);
+  const incognito = useApp((s) => s.incognito);
+  const toggleIncognito = useApp((s) => s.toggleIncognito);
   const scroller = useRef<HTMLDivElement>(null);
   const [stuck, setStuck] = useState(true);
+  const [menu, setMenu] = useState(false);
 
   useEffect(() => {
     if (stuck) scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
@@ -48,13 +63,40 @@ export default function Chat() {
 
   return (
     <section className="relative flex h-full min-w-0 flex-1 flex-col">
-      <div className="relative z-10 flex h-12 shrink-0 items-center gap-3 px-4">
+      <div className="relative z-10 flex h-12 shrink-0 items-center gap-3 px-4" style={{ borderBottom: "1px solid transparent" }}>
         <ModelPicker />
         {session && (
           <span className="truncate text-[13px]" style={{ color: "var(--muted)" }}>
             {session.name}
           </span>
         )}
+        <div className="ml-auto flex items-center gap-0.5">
+          <button className="pill h-8" data-on={incognito} title="Nobody mode — nothing is saved" onClick={toggleIncognito}>
+            <EyeOff size={12} /> Nobody
+          </button>
+          {session && (
+            <div className="relative">
+              <button className="icon-btn h-8 w-8" title="Chat actions" onClick={() => setMenu((v) => !v)}>
+                <MoreHorizontal size={16} />
+              </button>
+              {menu && (
+                <div className="glass absolute right-0 top-9 z-30 w-48 overflow-hidden rounded-xl py-1" style={{ boxShadow: "var(--shadow)" }} onMouseLeave={() => setMenu(false)}>
+                  <MenuItem icon={<Star size={13} />} label={session.is_important ? "Unstar" : "Star"} onClick={async () => { await sessionsApi.important(session.id, !session.is_important); useApp.getState().loadSessions(); setMenu(false); }} />
+                  <MenuItem icon={<Copy size={13} />} label="Copy chat" onClick={() => { const t = messages.map((m) => `**${m.role}:** ${m.content}`).join("\n\n"); navigator.clipboard.writeText(t); toast("Copied", "success"); setMenu(false); }} />
+                  <MenuItem icon={<Download size={13} />} label="Export markdown" onClick={async () => {
+                    try {
+                      const r = await sessionsApi.export(session.id, "md");
+                      await navigator.clipboard.writeText(r.text || "");
+                      toast("Exported to clipboard", "success");
+                    } catch (e: any) { toast(e.message || "Export failed", "error"); }
+                    setMenu(false);
+                  }} />
+                  <MenuItem icon={<Trash2 size={13} />} label="Delete chat" danger onClick={() => { deleteSession(session.id); setMenu(false); }} />
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       <div ref={scroller} onScroll={onScroll} className="relative z-10 flex-1 overflow-y-auto px-4">
@@ -71,6 +113,13 @@ export default function Chat() {
                   <p className="mt-1 text-[15px]" style={{ color: "var(--muted)" }}>
                     What can I help you with today?
                   </p>
+                </div>
+                <div className="flex w-full max-w-2xl flex-wrap justify-center gap-2">
+                  {QUICK.map((s) => (
+                    <button key={s.view} className="pill" onClick={() => setView(s.view)}>
+                      {s.icon} {s.title}
+                    </button>
+                  ))}
                 </div>
                 <div className="grid w-full max-w-2xl grid-cols-2 gap-2.5">
                   {SUGGESTIONS.map((s, i) => (
@@ -122,5 +171,13 @@ export default function Chat() {
 
       <Composer />
     </section>
+  );
+}
+
+function MenuItem({ icon, label, onClick, danger }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
+  return (
+    <button className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] hover:bg-[var(--accent-soft)]" style={{ color: danger ? "#f87171" : undefined }} onClick={onClick}>
+      {icon} {label}
+    </button>
   );
 }

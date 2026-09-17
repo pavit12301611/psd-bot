@@ -1,7 +1,32 @@
 import { useEffect, useState } from "react";
 import { Minus, Square, X, Copy, Sun, Moon, PanelLeft } from "lucide-react";
 import { inTauri } from "../lib/ipc";
-import { useApp } from "../store/app";
+import { useApp, type AppView } from "../store/app";
+
+const VIEW_LABEL: Record<AppView, string> = {
+  chat: "Chat",
+  models: "Models",
+  notes: "Notes",
+  tasks: "Tasks",
+  calendar: "Calendar",
+  memory: "Brain",
+  gallery: "Gallery",
+  library: "Library",
+  research: "Research",
+  compare: "Compare",
+  email: "Email",
+};
+
+function ViewChip() {
+  const view = useApp((s) => s.view);
+  const screen = useApp((s) => s.screen);
+  if (screen !== "app") return null;
+  return (
+    <span className="rounded-full px-2 py-0.5 text-[11px] font-medium" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
+      {VIEW_LABEL[view]}
+    </span>
+  );
+}
 
 export default function TitleBar({ showSidebarToggle = false }: { showSidebarToggle?: boolean }) {
   const [max, setMax] = useState(false);
@@ -9,6 +34,8 @@ export default function TitleBar({ showSidebarToggle = false }: { showSidebarTog
   const toggleTheme = useApp((s) => s.toggleTheme);
   const sidebarOpen = useApp((s) => s.sidebarOpen);
   const setSidebar = useApp((s) => s.setSidebar);
+  const view = useApp((s) => s.view);
+  const showToggle = showSidebarToggle && view === "chat";
 
   useEffect(() => {
     if (!inTauri) return;
@@ -25,7 +52,7 @@ export default function TitleBar({ showSidebarToggle = false }: { showSidebarTog
 
   return (
     <header data-tauri-drag-region className="drag relative z-20 flex h-11 shrink-0 items-center gap-2 px-3 select-none" style={{ borderBottom: "1px solid var(--border)" }}>
-      {showSidebarToggle && (
+      {showToggle && (
         <button className="icon-btn no-drag h-8 w-8" title="Toggle sidebar" onClick={() => setSidebar(!sidebarOpen)}>
           <PanelLeft size={16} />
         </button>
@@ -33,6 +60,7 @@ export default function TitleBar({ showSidebarToggle = false }: { showSidebarTog
       <div data-tauri-drag-region className="flex items-center gap-2 pl-1">
         <img src="/icon.png" alt="" className="h-5 w-5 rounded-md" draggable={false} />
         <span className="text-[13px] font-semibold tracking-tight">psd.ai</span>
+        <ViewChip />
       </div>
       <div data-tauri-drag-region className="flex-1" />
       <button className="icon-btn no-drag h-8 w-8" title="Toggle theme" onClick={toggleTheme}>

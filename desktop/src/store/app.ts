@@ -13,6 +13,18 @@ import {
 import type { StreamHandle } from "../lib/ipc";
 
 export type Screen = "boot" | "setup" | "login" | "app";
+export type AppView =
+  | "chat"
+  | "models"
+  | "notes"
+  | "tasks"
+  | "calendar"
+  | "memory"
+  | "gallery"
+  | "library"
+  | "research"
+  | "compare"
+  | "email";
 
 export interface ToolCall {
   id: string;
@@ -71,15 +83,21 @@ interface AppState {
   mode: "chat" | "agent";
   web: boolean;
   bash: boolean;
+  rag: boolean;
+  incognito: boolean;
 
   streaming: boolean;
   streamHandle: StreamHandle | null;
   runId: string;
 
+  view: AppView;
   sidebarOpen: boolean;
   settingsOpen: boolean;
+  paletteOpen: boolean;
+  shortcutsOpen: boolean;
   theme: "dark" | "light";
   toasts: Toast[];
+  engineOffline: boolean;
 
   // actions
   boot: () => Promise<void>;
@@ -92,9 +110,15 @@ interface AppState {
   renameSession: (id: string, name: string) => Promise<void>;
   loadModels: (refresh?: boolean) => Promise<void>;
   setRoute: (r: ModelRoute) => void;
+  selectModel: (r: ModelRoute) => Promise<void>;
   setMode: (m: "chat" | "agent") => void;
   toggleWeb: () => void;
   toggleBash: () => void;
+  toggleRag: () => void;
+  toggleIncognito: () => void;
+  setView: (v: AppView) => void;
+  setPalette: (v: boolean) => void;
+  setShortcuts: (v: boolean) => void;
   send: (text: string, attachments?: { id: string; name: string }[], approval?: { id: string; decision: string }) => Promise<void>;
   stop: () => Promise<void>;
   setSidebar: (v: boolean) => void;
@@ -128,15 +152,21 @@ export const useApp = create<AppState>((set, getState) => ({
   mode: (localStorage.getItem("psd.mode") as "chat" | "agent") || "chat",
   web: localStorage.getItem("psd.web") === "1",
   bash: localStorage.getItem("psd.bash") === "1",
+  rag: localStorage.getItem("psd.rag") === "1",
+  incognito: localStorage.getItem("psd.incognito") === "1",
 
   streaming: false,
   streamHandle: null,
   runId: "",
 
+  view: "chat",
   sidebarOpen: true,
   settingsOpen: false,
+  paletteOpen: false,
+  shortcutsOpen: false,
   theme: savedTheme,
   toasts: [],
+  engineOffline: false,
 
   toast: (text, kind = "info") => {
     const id = ++toastSeq;
@@ -156,7 +186,14 @@ export const useApp = create<AppState>((set, getState) => ({
         await Promise.all([getState().loadSessions(), getState().loadModels()]);
       }
     } catch (e: any) {
-      set({ bootError: e?.message || String(e) });
+      // Engine unreachable (browser preview, sidecar still warming up). Still
+      // open the workspace so every feature surface is visible and clickable.
+      set({
+        bootError: e?.message || String(e),
+        engineOffline: true,
+        screen: "app",
+        authStatus: { configured: true, authenticated: true, username: "you", is_admin: true },
+      });
     }
   },
 
@@ -187,7 +224,14 @@ export const useApp = create<AppState>((set, getState) => ({
 
   selectSession: async (id) => {
     if (getState().streaming) return;
-    set({ activeSessionId: id, sidebarOpen: window.innerWidth > 900 ? getState().sidebarOpen : false });
+    set({ activeSessionId: id, view: "chat", sidebarOpen: window.innerWidth > 900 ? getState().sidebarOpen : false });
+    if (id) {
+      const r = routeFromSession(getState(), id);
+      if (r) {
+        localStorage.setItem("psd.route", JSON.stringify(r));
+        set({ route: r });
+      }
+    }
     if (!id || getState().messages[id]) return;
     set({ loadingHistory: true });
     try {
@@ -219,7 +263,11 @@ export const useApp = create<AppState>((set, getState) => ({
 
   newChat: () => {
     if (getState().streaming) return;
-    set({ activeSessionId: null, sidebarOpen: window.innerWidth > 900 ? getState().sidebarOpen : false });
+    set({
+      activeSessionId: null,
+      view: "chat",
+      sidebarOpen: window.innerWidth > 900 ? getState().sidebarOpen : false,
+    });
   },
 
   deleteSession: async (id) => {
@@ -251,7 +299,13 @@ export const useApp = create<AppState>((set, getState) => ({
       set({ modelItems: items });
       const saved = safeJson<ModelRoute>(localStorage.getItem("psd.route"));
       const valid = (r: ModelRoute | null) =>
-        !!r && items.some((i) => (i.endpoint_id === r.endpoint_id || i.url === r.endpoint_url) && [...i.models, ...(i.models_extra || [])].includes(r.model));
+        !!r &&
+        items.some((i) => {
+          const models = [...i.models, ...(i.models_extra || [])];
+          if (!models.includes(r.model)) return false;
+          if (r.endpoint_id && i.endpoint_id && i.endpoint_id === r.endpoint_id) return true;
+          return urlsMatch(i.url, r.endpoint_url);
+        });
       if (valid(saved)) set({ route: saved });
       else if (def && def.model && valid({ model: def.model, endpoint_id: def.endpoint_id, endpoint_url: def.endpoint_url }))
         set({ route: { model: def.model, endpoint_id: def.endpoint_id, endpoint_url: def.endpoint_url } });
@@ -269,12 +323,37 @@ export const useApp = create<AppState>((set, getState) => ({
     localStorage.setItem("psd.route", JSON.stringify(r));
     set({ route: r });
   },
+  selectModel: async (r) => {
+    localStorage.setItem("psd.route", JSON.stringify(r));
+    const sid = getState().activeSessionId;
+    set((s) => ({
+      route: r,
+      sessions: sid
+        ? s.sessions.map((x) => (x.id === sid ? { ...x, model: r.model, endpoint_url: r.endpoint_url, endpoint_id: r.endpoint_id } : x))
+        : s.sessions,
+    }));
+    if (!sid) {
+      getState().toast(`Using ${r.model.split("/").pop()}`, "success");
+      return;
+    }
+    try {
+      await sessionsApi.setModel(sid, r.model, r.endpoint_id, r.endpoint_url);
+      getState().toast(`Using ${r.model.split("/").pop()}`, "success");
+    } catch (e: any) {
+      getState().toast(e?.message || "Failed to set model", "error");
+    }
+  },
   setMode: (m) => {
     localStorage.setItem("psd.mode", m);
     set({ mode: m });
   },
   toggleWeb: () => set((s) => (localStorage.setItem("psd.web", s.web ? "0" : "1"), { web: !s.web })),
   toggleBash: () => set((s) => (localStorage.setItem("psd.bash", s.bash ? "0" : "1"), { bash: !s.bash })),
+  toggleRag: () => set((s) => (localStorage.setItem("psd.rag", s.rag ? "0" : "1"), { rag: !s.rag })),
+  toggleIncognito: () => set((s) => (localStorage.setItem("psd.incognito", s.incognito ? "0" : "1"), { incognito: !s.incognito })),
+  setView: (v) => set({ view: v, settingsOpen: false, paletteOpen: false, sidebarOpen: v === "chat" ? getState().sidebarOpen : getState().sidebarOpen }),
+  setPalette: (v) => set({ paletteOpen: v }),
+  setShortcuts: (v) => set({ shortcutsOpen: v }),
 
   send: async (text, attachments = [], approval) => {
     const st = getState();
@@ -282,7 +361,7 @@ export const useApp = create<AppState>((set, getState) => ({
     if (!text.trim() && !attachments.length && !approval) return;
     const route = st.route;
     if (!route) {
-      st.toast("No model available yet. Add a model endpoint in Settings.", "error");
+      st.toast("No model available yet. Download one from Models, or add an endpoint in Settings.", "error");
       return;
     }
 
@@ -319,7 +398,7 @@ export const useApp = create<AppState>((set, getState) => ({
     let raw = "";
     let rawThinking = "";
     const handle = sendChat(
-      { sessionId, message: text, mode: st.mode, web: st.web, bash: st.bash, model: route.model, endpointId: route.endpoint_id, endpointUrl: route.endpoint_url, attachments: attachments.map((a) => a.id), toolApproval: approval },
+      { sessionId, message: text, mode: st.mode, web: st.web, bash: st.bash, rag: st.rag, incognito: st.incognito, model: route.model, endpointId: route.endpoint_id, endpointUrl: route.endpoint_url, attachments: attachments.map((a) => a.id), toolApproval: approval },
       {
         onOpen: (runId) => set({ runId }),
         onEvent: (ev) => {
@@ -460,4 +539,42 @@ export function splitThinking(raw: string): { text: string; thinking?: string } 
       return "";
     });
   return { text: text.replace(/^\s+/, ""), thinking: thinking.trim() || undefined };
+}
+
+function urlsMatch(a?: string, b?: string) {
+  const n = (u?: string) =>
+    (u || "")
+      .trim()
+      .replace(/\/+$/, "")
+      .replace(/\/chat\/completions$/i, "")
+      .replace(/\/v1$/i, "");
+  return !!a && !!b && n(a) === n(b);
+}
+
+function routeFromSession(st: { sessions: Session[]; modelItems: ModelItem[] }, id: string): ModelRoute | null {
+  const s = st.sessions.find((x) => x.id === id);
+  if (!s?.model) return null;
+  const item = st.modelItems.find((i) => {
+    const models = [...i.models, ...(i.models_extra || [])];
+    if (!models.includes(s.model)) return false;
+    if (s.endpoint_id && i.endpoint_id && s.endpoint_id === i.endpoint_id) return true;
+    if (s.endpoint_url && urlsMatch(i.url, s.endpoint_url)) return true;
+    return false;
+  });
+  if (item) {
+    return {
+      model: s.model,
+      endpoint_id: item.endpoint_id || s.endpoint_id || "",
+      endpoint_url: item.url || s.endpoint_url || "",
+      endpoint_name: item.endpoint_name,
+    };
+  }
+  if (s.endpoint_url || s.endpoint_id) {
+    return {
+      model: s.model,
+      endpoint_id: s.endpoint_id || "",
+      endpoint_url: s.endpoint_url || "",
+    };
+  }
+  return null;
 }

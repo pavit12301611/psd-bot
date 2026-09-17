@@ -3,10 +3,11 @@ import { motion, AnimatePresence } from "motion/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import { Brain, ChevronDown, Copy, Check, Terminal, Globe, Paperclip, AlertTriangle, Clock } from "lucide-react";
+import { Brain, ChevronDown, Copy, Check, Terminal, Globe, Paperclip, AlertTriangle, Clock, Volume2 } from "lucide-react";
 import type { Message as Msg, ToolCall } from "../store/app";
 import { useApp } from "../store/app";
 import { inTauri, request } from "../lib/ipc";
+import { voice } from "../lib/api";
 
 /** Images served by the backend (/api/...) must be fetched over IPC inside Tauri. */
 function ApiImage({ src, alt }: { src?: string; alt?: string }) {
@@ -40,6 +41,41 @@ function CopyBtn({ text }: { text: string }) {
       }}
     >
       {ok ? <Check size={13} /> : <Copy size={13} />}
+    </button>
+  );
+}
+
+function SpeakBtn({ text }: { text: string }) {
+  const [busy, setBusy] = useState(false);
+  const toast = useApp((s) => s.toast);
+  return (
+    <button
+      className="icon-btn h-7 w-7"
+      title="Read aloud"
+      disabled={busy || !text.trim()}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          const r = await voice.speak(text.slice(0, 4000));
+          const b64 = r.audio || r.base64;
+          if (b64) {
+            const audio = new Audio(`data:audio/wav;base64,${b64}`);
+            await audio.play();
+          } else if ("speechSynthesis" in window) {
+            const u = new SpeechSynthesisUtterance(text.slice(0, 4000));
+            window.speechSynthesis.speak(u);
+          } else toast("No TTS available", "info");
+        } catch {
+          if ("speechSynthesis" in window) {
+            const u = new SpeechSynthesisUtterance(text.slice(0, 4000));
+            window.speechSynthesis.speak(u);
+          } else toast("Read-aloud failed", "error");
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <Volume2 size={13} className={busy ? "animate-pulse" : ""} />
     </button>
   );
 }
@@ -266,6 +302,7 @@ function MessageView({ msg, isLast }: { msg: Msg; isLast: boolean }) {
         {!msg.streaming && msg.content && (
           <div className={`mt-1 flex items-center gap-1 transition-opacity ${isLast ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}>
             <CopyBtn text={msg.content} />
+            <SpeakBtn text={msg.content} />
             {msg.metrics?.tokens_per_second && (
               <span className="text-[11px]" style={{ color: "var(--muted)" }}>
                 {Number(msg.metrics.tokens_per_second).toFixed(1)} tok/s
