@@ -19,9 +19,11 @@ Double-click **`run.bat`** — that's it. It will:
    create your admin account right in the window
 
 `run.bat` uses a prebuilt app if one is present (`desktop\psd.ai.exe` or
-`desktop\src-tauri\target\release\psd-ai-desktop.exe`); otherwise, if Node.js and
-Rust are installed, it builds the app from source the first time. After that,
-re-running `run.bat` just opens the app. Close the window to stop.
+`desktop\src-tauri\target\release\psd-ai-desktop.exe`). Otherwise it **installs
+the build toolchain itself** — portable Node.js (into `.tools\`), Rust (via
+rustup), and the Microsoft C++ Build Tools (one UAC prompt) — and builds the
+app once. After that, re-running `run.bat` just opens the app. Close the
+window to stop.
 
 ## The local AI model group
 

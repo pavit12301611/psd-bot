@@ -166,8 +166,9 @@ REM
 REM     Preference order:
 REM       a) a built app:      desktop\src-tauri\target\release\psd-ai-desktop.exe
 REM       b) a portable copy:  desktop\psd.ai.exe   (drop a release build here)
-REM       c) developer mode:   `npm run tauri dev` inside desktop\
-REM          (needs Node.js + Rust; builds the app the first time)
+REM       c) build from source: Node.js + Rust + C++ Build Tools are
+REM          installed AUTOMATICALLY if missing, then the app is built
+REM          once (later runs reuse the exe)
 REM
 REM     The app spawns psd.ai\desktop_server.py itself on a private,
 REM     random loopback port and talks to it through IPC. Nothing is
@@ -192,28 +193,49 @@ if defined APP_EXE (
     goto :done
 )
 
-REM ---- developer fallback: build + run the Tauri app from source ----
+REM ---- build from source: auto-install Node.js / Rust / C++ tools ----
+REM  Everything portable goes under .tools\ next to this file (Node), or the
+REM  usual per-user locations (Rust -> %USERPROFILE%\.cargo). The Microsoft
+REM  C++ Build Tools need one UAC "Yes" click. No manual downloads required.
+set "TOOLS_DIR=%ROOT%.tools"
+if exist "%TOOLS_DIR%\path.txt" (
+    for /f "usebackq delims=" %%p in ("%TOOLS_DIR%\path.txt") do set "PATH=%%p;!PATH!"
+)
+if exist "%USERPROFILE%\.cargo\bin\cargo.exe" set "PATH=%USERPROFILE%\.cargo\bin;!PATH!"
+
+set "NEED_TOOLS="
+where node >nul 2>&1 || set "NEED_TOOLS=1"
+where cargo >nul 2>&1 || set "NEED_TOOLS=1"
+if defined NEED_TOOLS (
+    echo.
+    echo  ==^> No built app found. Installing the build toolchain automatically
+    echo      ^(Node.js, Rust, Microsoft C++ Build Tools^). First time only.
+    echo      This downloads a few GB and can take 10-20 minutes.
+    echo.
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%DESKTOP_DIR%\scripts\ensure-toolchain.ps1" -ToolsDir "%TOOLS_DIR%"
+    if errorlevel 1 (
+        echo.
+        echo  [ERROR] Automatic toolchain install failed - scroll up for details.
+        echo          Fix the issue ^(usually network or the UAC prompt was declined^)
+        echo          and double-click run.bat again. Already-installed parts are skipped.
+        echo.
+        pause
+        exit /b 1
+    )
+    if exist "%TOOLS_DIR%\path.txt" (
+        for /f "usebackq delims=" %%p in ("%TOOLS_DIR%\path.txt") do set "PATH=%%p;!PATH!"
+    )
+    if exist "%USERPROFILE%\.cargo\bin\cargo.exe" set "PATH=%USERPROFILE%\.cargo\bin;!PATH!"
+)
 where node >nul 2>&1
 if errorlevel 1 (
-    echo.
-    echo  [ERROR] No built psd.ai desktop app was found and Node.js is not installed.
-    echo.
-    echo  Either:
-    echo    - place a release build at  desktop\psd.ai.exe   ^(see desktop\README.md^), or
-    echo    - install Node.js LTS ^(https://nodejs.org^) and Rust ^(https://rustup.rs^),
-    echo      then double-click run.bat again to build the app from source.
-    echo.
+    echo  [ERROR] Node.js is still not available on PATH after install. Reopen this window and retry.
     pause
     exit /b 1
 )
 where cargo >nul 2>&1
 if errorlevel 1 (
-    echo.
-    echo  [ERROR] No built psd.ai desktop app was found and Rust ^(cargo^) is not installed.
-    echo.
-    echo  Install Rust from https://rustup.rs ^(default options^), reopen this window,
-    echo  and double-click run.bat again. The first build takes a few minutes.
-    echo.
+    echo  [ERROR] Rust ^(cargo^) is still not available on PATH after install. Reopen this window and retry.
     pause
     exit /b 1
 )
