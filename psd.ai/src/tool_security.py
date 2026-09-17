@@ -52,6 +52,11 @@ NON_ADMIN_BLOCKED_TOOLS = BUILTIN_EMAIL_TOOLS | {
     "ls",
     "get_workspace",
     "search_chats",
+    # Workspace-reading coding helpers — same exposure as read_file/grep, so
+    # they stay admin-gated for non-admin owners. (todoread is session-scoped
+    # state like todowrite, which is not blocked here.)
+    "code_stats",
+    "regex_test",
     "manage_memory",
     "manage_skills",
     "manage_tasks",
@@ -94,6 +99,9 @@ PLAN_MODE_READONLY_TOOLS = {
     "glob",
     "ls",
     "get_workspace",
+    "todoread",
+    "code_stats",
+    "regex_test",
     "web_search",
     "web_fetch",
     "search_chats",

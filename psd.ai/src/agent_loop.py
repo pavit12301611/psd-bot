@@ -533,7 +533,7 @@ _DOMAIN_TOOL_MAP = {
     "notes_calendar_tasks": {"manage_notes", "manage_calendar", "manage_tasks"},
     "ui": {"ui_control"},
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
-    "files": {"bash", "python", "read_file", "write_file", "edit_file", "apply_patch", "todowrite", "grep", "glob", "ls", "get_workspace", "manage_bg_jobs"},
+    "files": {"bash", "python", "read_file", "write_file", "edit_file", "apply_patch", "todowrite", "todoread", "code_stats", "regex_test", "grep", "glob", "ls", "get_workspace", "manage_bg_jobs"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
     "contacts": {"resolve_contact", "manage_contact"},
     "integrations": {"api_call"},
@@ -634,6 +634,23 @@ Apply a source-code patch to real workspace files. Use this for multi-file imple
 {"todos":[{"content":"Inspect current code","status":"in_progress","priority":"high"},{"content":"Patch implementation","status":"pending","priority":"high"}]}
 ```
 Maintain a structured task list for multi-step coding work. Use it when the task has several phases (inspect, edit, test, fix). Keep statuses current; only one todo should be `in_progress`.""",
+
+    "todoread": """\
+```todoread
+```
+Read back the current session's task list (written with todowrite) without changing it. Use after many tool rounds or when context feels stale, to re-check what is done and what is in progress before continuing. No arguments.""",
+
+    "code_stats": """\
+```code_stats
+{"path":"src/parser.py"}
+```
+Size up a source file BEFORE reading or editing it: line counts (total/code/blank/comment), language, function/class counts, imports. Cheaper first look than read_file.""",
+
+    "regex_test": """\
+```regex_test
+{"pattern":"\\\\b\\\\w+@\\\\w+\\\\.\\\\w+","text":"mail bob@example.com ok","flags":"i"}
+```
+Test a regular expression against inline `text` or a workspace `path`. Shows every match with line/column, span, and captured groups — use it to develop or debug a pattern instead of burning shell rounds.""",
 
     "get_workspace": """\
 ```get_workspace
