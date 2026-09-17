@@ -254,6 +254,12 @@ def infer_use_case(model):
         return "tts"
     if any(k in combined for k in ("stt", "speech-to-text", "whisper", "transcri", "asr")):
         return "stt"
+    # An explicit "coding" capability beats generic name patterns: curated
+    # coding-capable models whose names/use_case don't contain "code"
+    # (e.g. Phi-3.5 "Lightweight, long context") still belong in the
+    # coding filter.
+    if any(str(c).strip().lower() == "coding" for c in (model.get("capabilities") or [])):
+        return "coding"
     if "code" in combined:
         return "coding"
     if any(k in combined for k in ("vision", "multimodal", "vlm", "vl-")):
@@ -263,6 +269,65 @@ def infer_use_case(model):
     if any(k in combined for k in ("chat", "instruction")):
         return "chat"
     return "general"
+
+
+# ── License / access classification ────────────────────────────────────
+# "unrestricted": permissive open licenses (Apache-2.0, MIT, BSD…) — run it
+# offline, ship it, modify it, no strings attached.
+# "restricted": gated Hugging Face repos or custom licenses that impose
+# conditions (Llama Community, Gemma terms, Mistral MNPL, OpenRAIL use
+# clauses, DeepSeek license…) — usable locally, but read the terms first.
+# Catalog entries may carry explicit `license` / `access` fields which
+# always win; the family table below covers models without metadata.
+
+_PERMISSIVE_LICENSES = {
+    "apache-2.0", "mit", "bsd", "bsd-2-clause", "bsd-3-clause", "0bsd",
+    "isc", "unlicense", "cc0-1.0", "openrail-mit",
+}
+
+# Ordered: first match on the lowercased repo id wins. Keep specific family
+# names first so generic substrings can't shadow them.
+_ACCESS_BY_FAMILY = (
+    ("qwen2.5-coder", "apache-2.0"),
+    ("qwen3-coder", "apache-2.0"),
+    ("granite", "apache-2.0"),
+    ("devstral", "apache-2.0"),
+    ("opencoder", "apache-2.0"),
+    ("/phi-2", "mit"),
+    ("/phi-3", "mit"),
+    ("/phi-4", "mit"),
+    ("/phi3", "mit"),
+    ("/phi4", "mit"),
+    ("codestral", "mnpl"),
+    ("codegemma", "gemma"),
+    ("codellama", "llama-2-community"),
+    ("phind-codellama", "llama-2-community"),
+    ("wizardcoder", "bigcode-openrail-m"),
+    ("starcoder", "bigcode-openrail-m"),
+    ("santacoder", "bigcode-openrail-m"),
+    ("deepseek-coder", "deepseek-license"),
+)
+
+def model_access(model):
+    """Classify a catalog entry as unrestricted/restricted.
+
+    Returns {"access": "unrestricted"|"restricted"|"", "license": label}.
+    Empty access means unknown — the UI shows no badge rather than guessing.
+    """
+    explicit_access = str(model.get("access") or "").strip().lower()
+    explicit_license = str(model.get("license") or "").strip()
+    if explicit_access in ("unrestricted", "restricted"):
+        return {"access": explicit_access, "license": explicit_license}
+    if explicit_license:
+        normalized = explicit_license.lower()
+        access = "unrestricted" if normalized in _PERMISSIVE_LICENSES else "restricted"
+        return {"access": access, "license": explicit_license}
+    name = (model.get("name") or "").lower()
+    for marker, license_label in _ACCESS_BY_FAMILY:
+        if marker in name:
+            access = "unrestricted" if license_label in _PERMISSIVE_LICENSES else "restricted"
+            return {"access": access, "license": license_label}
+    return {"access": "", "license": ""}
 
 
 _models_cache = None

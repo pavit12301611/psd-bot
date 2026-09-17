@@ -2099,13 +2099,17 @@
   "quantization": "Q4_K_M",
   "context_length": 2048,
   "use_case": "Code generation and completion",
-  "capabilities": [],
+  "capabilities": [
+   "coding"
+  ],
   "pipeline_tag": "text-generation",
   "architecture": "gpt_bigcode",
   "hf_downloads": 49973,
   "hf_likes": 26,
   "release_date": "2023-04-06",
-  "_discovered": true
+  "_discovered": true,
+  "license": "bigcode-openrail-m",
+  "access": "restricted"
  },
  {
   "name": "lmstudio-community/Qwen3-4B-Thinking-2507-MLX-8bit",
@@ -2728,6 +2732,7 @@
   "context_length": 32768,
   "use_case": "Code generation and completion",
   "capabilities": [
+   "coding",
    "tool_use"
   ],
   "pipeline_tag": "text-generation",
@@ -2744,7 +2749,9 @@
     "repo": "bartowski/Qwen2.5-Coder-1.5B-Instruct-GGUF",
     "provider": "bartowski"
    }
-  ]
+  ],
+  "license": "apache-2.0",
+  "access": "unrestricted"
  },
  {
   "name": "Qwen/Qwen2.5-1.5B-Instruct",
@@ -3773,13 +3780,17 @@
   "quantization": "Q4_K_M",
   "context_length": 16384,
   "use_case": "Code generation and completion",
-  "capabilities": [],
+  "capabilities": [
+   "coding"
+  ],
   "pipeline_tag": "text-generation",
   "architecture": "starcoder2",
   "hf_downloads": 97310,
   "hf_likes": 216,
   "release_date": "2023-11-29",
-  "_discovered": true
+  "_discovered": true,
+  "license": "bigcode-openrail-m",
+  "access": "restricted"
  },
  {
   "name": "TechxGenus/gemma-1.1-2b-it-GPTQ",
@@ -3867,6 +3878,7 @@
   "context_length": 32768,
   "use_case": "Code generation and completion",
   "capabilities": [
+   "coding",
    "tool_use"
   ],
   "pipeline_tag": "text-generation",
@@ -3884,7 +3896,9 @@
     "repo": "bartowski/Qwen2.5-Coder-3B-Instruct-GGUF",
     "provider": "bartowski"
    }
-  ]
+  ],
+  "license": "apache-2.0",
+  "access": "unrestricted"
  },
  {
   "name": "Salesforce/xLAM-2-3b-fc-r",
@@ -4191,7 +4205,12 @@
     "repo": "bartowski/Phi-3.5-mini-instruct-GGUF",
     "provider": "bartowski"
    }
-  ]
+  ],
+  "capabilities": [
+   "coding"
+  ],
+  "license": "mit",
+  "access": "unrestricted"
  },
  {
   "name": "zstanjj/HTML-Pruner-Phi-3.8B",
@@ -5046,12 +5065,16 @@
   "quantization": "Q4_K_M",
   "context_length": 4096,
   "use_case": "Code generation and completion",
-  "capabilities": [],
+  "capabilities": [
+   "coding"
+  ],
   "pipeline_tag": "text-generation",
   "architecture": "llama",
   "hf_downloads": 5404,
   "hf_likes": 59,
-  "release_date": "2024-03-13"
+  "release_date": "2024-03-13",
+  "license": "llama-2-community",
+  "access": "restricted"
  },
  {
   "name": "codellama/CodeLlama-7b-Instruct-hf",
@@ -5064,13 +5087,17 @@
   "quantization": "Q4_K_M",
   "context_length": 16384,
   "use_case": "Code generation and completion",
-  "capabilities": [],
+  "capabilities": [
+   "coding"
+  ],
   "pipeline_tag": "text-generation",
   "architecture": "llama",
   "hf_downloads": 65896,
   "hf_likes": 254,
   "release_date": "2023-08-24",
-  "_discovered": true
+  "_discovered": true,
+  "license": "llama-2-community",
+  "access": "restricted"
  },
  {
   "name": "codellama/CodeLlama-7b-hf",
@@ -5102,13 +5129,17 @@
   "quantization": "Q4_K_M",
   "context_length": 16384,
   "use_case": "Code generation and completion",
-  "capabilities": [],
+  "capabilities": [
+   "coding"
+  ],
   "pipeline_tag": "text-generation",
   "architecture": "llama",
   "hf_downloads": 97176,
   "hf_likes": 478,
   "release_date": "2023-10-29",
-  "_discovered": true
+  "_discovered": true,
+  "license": "deepseek-license",
+  "access": "restricted"
  },
  {
   "name": "deepseek-ai/DeepSeek-V4-Flash",
@@ -5171,7 +5202,7 @@
   "min_vram_gb": 284.0,
   "quantization": "FP8-Mixed",
   "context_length": 1000000,
-  "use_case": "Base pretrained \u2014 fine-tuning starting point",
+  "use_case": "Base pretrained — fine-tuning starting point",
   "capabilities": [
    "long_context",
    "moe"
@@ -5243,7 +5274,7 @@
   "min_vram_gb": 1600.0,
   "quantization": "FP8-Mixed",
   "context_length": 1000000,
-  "use_case": "Base pretrained \u2014 fine-tuning starting point",
+  "use_case": "Base pretrained — fine-tuning starting point",
   "capabilities": [
    "long_context",
    "moe"
@@ -5265,13 +5296,17 @@
   "quantization": "Q4_K_M",
   "context_length": 16384,
   "use_case": "Code generation and completion",
-  "capabilities": [],
+  "capabilities": [
+   "coding"
+  ],
   "pipeline_tag": "text-generation",
   "architecture": "llama",
   "hf_downloads": 28134,
   "hf_likes": 122,
   "release_date": "2023-10-23",
-  "_discovered": true
+  "_discovered": true,
+  "license": "deepseek-license",
+  "access": "restricted"
  },
  {
   "name": "allenai/OLMoE-1B-7B-0125",
@@ -5419,12 +5454,16 @@
   "quantization": "Q4_K_M",
   "context_length": 16384,
   "use_case": "Code generation and completion",
-  "capabilities": [],
+  "capabilities": [
+   "coding"
+  ],
   "pipeline_tag": "text-generation",
   "architecture": "starcoder2",
   "hf_downloads": 19199,
   "hf_likes": 208,
-  "release_date": "2024-02-20"
+  "release_date": "2024-02-20",
+  "license": "bigcode-openrail-m",
+  "access": "restricted"
  },
  {
   "name": "tiiuae/falcon-7b-instruct",
@@ -5836,6 +5875,7 @@
   "context_length": 32768,
   "use_case": "Code generation and completion",
   "capabilities": [
+   "coding",
    "tool_use"
   ],
   "pipeline_tag": "text-generation",
@@ -5852,7 +5892,9 @@
     "repo": "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF",
     "provider": "bartowski"
    }
-  ]
+  ],
+  "license": "apache-2.0",
+  "access": "unrestricted"
  },
  {
   "name": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
@@ -7929,7 +7971,9 @@
     "repo": "bartowski/Qwen2.5-Coder-14B-Instruct-GGUF",
     "provider": "bartowski"
    }
-  ]
+  ],
+  "license": "apache-2.0",
+  "access": "unrestricted"
  },
  {
   "name": "Qwen/Qwen2.5-14B-Instruct-AWQ",
@@ -8224,7 +8268,12 @@
   "architecture": "starcoder2",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": null
+  "release_date": null,
+  "capabilities": [
+   "coding"
+  ],
+  "license": "bigcode-openrail-m",
+  "access": "restricted"
  },
  {
   "name": "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct",
@@ -9722,7 +9771,9 @@
     "repo": "bartowski/Qwen2.5-Coder-32B-Instruct-GGUF",
     "provider": "bartowski"
    }
-  ]
+  ],
+  "license": "apache-2.0",
+  "access": "unrestricted"
  },
  {
   "name": "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
@@ -19473,5 +19524,210 @@
    }
   ],
   "_discovered": true
+ },
+ {
+  "name": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+  "provider": "Alibaba",
+  "parameter_count": "30.5B",
+  "parameters_raw": 30500000000,
+  "min_ram_gb": 18.5,
+  "recommended_ram_gb": 30.0,
+  "min_vram_gb": 17.5,
+  "quantization": "Q4_K_M",
+  "context_length": 262144,
+  "use_case": "Code generation, agentic coding",
+  "capabilities": [
+   "coding",
+   "tool_use",
+   "moe"
+  ],
+  "is_moe": true,
+  "pipeline_tag": "text-generation",
+  "architecture": "qwen3_moe",
+  "hf_downloads": 260000,
+  "hf_likes": 890,
+  "release_date": "2025-07-22",
+  "license": "apache-2.0",
+  "access": "unrestricted",
+  "gguf_sources": [
+   {
+    "repo": "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+    "provider": "unsloth"
+   }
+  ]
+ },
+ {
+  "name": "mistralai/Devstral-Small-2507",
+  "provider": "Mistral AI",
+  "parameter_count": "24B",
+  "parameters_raw": 24000000000,
+  "min_ram_gb": 13.9,
+  "recommended_ram_gb": 22.8,
+  "min_vram_gb": 12.4,
+  "quantization": "Q4_K_M",
+  "context_length": 131072,
+  "use_case": "Agentic coding, code generation",
+  "capabilities": [
+   "coding",
+   "tool_use"
+  ],
+  "pipeline_tag": "text-generation",
+  "architecture": "mistral",
+  "hf_downloads": 180000,
+  "hf_likes": 640,
+  "release_date": "2025-07-09",
+  "license": "apache-2.0",
+  "access": "unrestricted",
+  "gguf_sources": [
+   {
+    "repo": "mistralai/Devstral-Small-2507-GGUF",
+    "provider": "mistralai"
+   }
+  ]
+ },
+ {
+  "name": "ibm-granite/granite-4.0-h-tiny",
+  "provider": "IBM",
+  "parameter_count": "7B",
+  "parameters_raw": 7000000000,
+  "min_ram_gb": 4.1,
+  "recommended_ram_gb": 6.8,
+  "min_vram_gb": 3.6,
+  "quantization": "Q4_K_M",
+  "context_length": 131072,
+  "use_case": "Code and chat, efficient hybrid attention",
+  "capabilities": [
+   "coding",
+   "tool_use"
+  ],
+  "pipeline_tag": "text-generation",
+  "architecture": "granite",
+  "hf_downloads": 95000,
+  "hf_likes": 210,
+  "release_date": "2025-10-01",
+  "license": "apache-2.0",
+  "access": "unrestricted",
+  "gguf_sources": [
+   {
+    "repo": "ibm-granite/granite-4.0-h-tiny-GGUF",
+    "provider": "ibm-granite"
+   }
+  ]
+ },
+ {
+  "name": "codellama/CodeLlama-13b-Instruct-hf",
+  "provider": "Meta",
+  "parameter_count": "13B",
+  "parameters_raw": 13015472128,
+  "min_ram_gb": 7.5,
+  "recommended_ram_gb": 12.6,
+  "min_vram_gb": 6.8,
+  "quantization": "Q4_K_M",
+  "context_length": 4096,
+  "use_case": "Code generation and completion",
+  "capabilities": [
+   "coding"
+  ],
+  "pipeline_tag": "text-generation",
+  "architecture": "llama",
+  "hf_downloads": 45000,
+  "hf_likes": 310,
+  "release_date": "2024-03-13",
+  "license": "llama-2-community",
+  "access": "restricted"
+ },
+ {
+  "name": "codellama/CodeLlama-34b-Instruct-hf",
+  "provider": "Meta",
+  "parameter_count": "34B",
+  "parameters_raw": 34000000000,
+  "min_ram_gb": 19.7,
+  "recommended_ram_gb": 32.3,
+  "min_vram_gb": 17.7,
+  "quantization": "Q4_K_M",
+  "context_length": 4096,
+  "use_case": "Code generation and completion",
+  "capabilities": [
+   "coding"
+  ],
+  "pipeline_tag": "text-generation",
+  "architecture": "llama",
+  "hf_downloads": 30000,
+  "hf_likes": 420,
+  "release_date": "2024-03-13",
+  "license": "llama-2-community",
+  "access": "restricted"
+ },
+ {
+  "name": "mistralai/Codestral-22B-v0.1",
+  "provider": "Mistral AI",
+  "parameter_count": "22.2B",
+  "parameters_raw": 22249144320,
+  "min_ram_gb": 12.9,
+  "recommended_ram_gb": 21.1,
+  "min_vram_gb": 11.6,
+  "quantization": "Q4_K_M",
+  "context_length": 32768,
+  "use_case": "Code generation and completion",
+  "capabilities": [
+   "coding"
+  ],
+  "pipeline_tag": "text-generation",
+  "architecture": "mistral",
+  "hf_downloads": 160000,
+  "hf_likes": 830,
+  "release_date": "2024-05-29",
+  "license": "mnpl",
+  "access": "restricted",
+  "gguf_sources": [
+   {
+    "repo": "bartowski/Codestral-22B-v0.1-GGUF",
+    "provider": "bartowski"
+   }
+  ]
+ },
+ {
+  "name": "google/codegemma-7b-it",
+  "provider": "Google",
+  "parameter_count": "8.5B",
+  "parameters_raw": 8537767936,
+  "min_ram_gb": 4.9,
+  "recommended_ram_gb": 8.2,
+  "min_vram_gb": 4.4,
+  "quantization": "Q4_K_M",
+  "context_length": 8192,
+  "use_case": "Code generation and completion",
+  "capabilities": [
+   "coding"
+  ],
+  "pipeline_tag": "text-generation",
+  "architecture": "gemma",
+  "hf_downloads": 25000,
+  "hf_likes": 280,
+  "release_date": "2024-04-09",
+  "license": "gemma",
+  "access": "restricted"
+ },
+ {
+  "name": "deepseek-ai/deepseek-coder-33b-instruct",
+  "provider": "DeepSeek",
+  "parameter_count": "33B",
+  "parameters_raw": 33000000000,
+  "min_ram_gb": 19.1,
+  "recommended_ram_gb": 31.4,
+  "min_vram_gb": 17.2,
+  "quantization": "Q4_K_M",
+  "context_length": 16384,
+  "use_case": "Code generation and completion",
+  "capabilities": [
+   "coding"
+  ],
+  "pipeline_tag": "text-generation",
+  "architecture": "llama",
+  "hf_downloads": 60000,
+  "hf_likes": 720,
+  "release_date": "2024-01-11",
+  "license": "deepseek-license",
+  "access": "restricted"
  }
 ]

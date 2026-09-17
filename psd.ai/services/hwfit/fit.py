@@ -3,7 +3,7 @@ import re
 from services.hwfit.models import (
     params_b, estimate_memory_gb, infer_use_case,
     get_models, is_prequantized, _active_params_b, QUANT_BYTES_PER_PARAM,
-    QUANT_SPEED_MULT, QUANT_QUALITY_PENALTY,
+    QUANT_SPEED_MULT, QUANT_QUALITY_PENALTY, model_access,
 )
 
 GPU_BANDWIDTH = {
@@ -435,6 +435,7 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
 
     model_use_case = infer_use_case(model)
     score_use_case = scoring_use_case or "general"
+    access_info = model_access(model)
     has_gpu = system.get("has_gpu", False)
     gpu_vram = (system.get("gpu_vram_gb") or 0) if has_gpu else 0
     gpu_count = system.get("gpu_count", 1) or 1
@@ -529,6 +530,8 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
             "params_b": round(pb, 1),
             "is_moe": is_moe,
             "use_case": model_use_case,
+            "access": access_info["access"],
+            "license": access_info["license"],
             "fit_level": "too_tight",
             "run_mode": "no_fit",
             "quant": quant_to_try,
@@ -604,6 +607,8 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
         "params_b": round(pb, 1),
         "is_moe": is_moe,
         "use_case": model_use_case,
+        "access": access_info["access"],
+        "license": access_info["license"],
         "fit_level": fit_level,
         "run_mode": run_mode,
         "quant": quant,
@@ -705,16 +710,23 @@ def _matches_search(model, search):
     return True
 
 
-def rank_models(system, use_case=None, limit=50, search=None, sort="score", quant=None, target_context=None, fit_only=False):
+def rank_models(system, use_case=None, limit=50, search=None, sort="score", quant=None, target_context=None, fit_only=False, access=None):
     """Rank all models against detected hardware. Returns sorted list of fit results.
 
     fit_only: when True, drop rows whose fit_level is "too_tight" (model doesn't
     actually fit on the chosen budget). When False (default), every model is
     shown — sorting by Param means highest-param PERIOD, even ones that won't
     run, so the user can see the truth.
+
+    access: optional license filter — "unrestricted" (permissive open
+    licenses) or "restricted" (gated/custom-license models only).
     """
     models = get_models()
     results = []
+    if access:
+        access = str(access).strip().lower()
+        if access not in ("unrestricted", "restricted"):
+            access = None
 
     # Include image gen models only when explicitly filtered
     if use_case == "image_gen":
@@ -748,6 +760,8 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
                 "is_image_gen": True,
                 "capabilities": im.get("capabilities", []),
                 "description": im.get("description", ""),
+                "access": "",
+                "license": "",
             })
         if use_case == "image_gen":
             sort_fn = SORT_KEYS.get(sort, SORT_KEYS["score"])
@@ -827,6 +841,13 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
                 continue
 
         if search and not _matches_search(m, search):
+            continue
+
+        # License/access filter — cheap name+field check before the heavier
+        # analyze_model pass. Rows without metadata ("") never match a
+        # specific access filter, so an explicit pick shows only classified
+        # models instead of a mixed list.
+        if access and model_access(m)["access"] != access:
             continue
 
         model_quant = quant
