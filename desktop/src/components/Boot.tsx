@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { RefreshCw, TerminalSquare } from "lucide-react";
 import { backendStatus, onBackendLog, onBackendStatus, restartBackend, type BackendStatus } from "../lib/ipc";
@@ -11,8 +11,23 @@ export default function Boot() {
   const [log, setLog] = useState<string[]>([]);
   const [showLog, setShowLog] = useState(false);
   const [step, setStep] = useState(0);
+  const [slow, setSlow] = useState(false);
   const boot = useApp((s) => s.boot);
   const bootError = useApp((s) => s.bootError);
+  const logRef = useRef<HTMLPreElement>(null);
+
+  // After 60s on the same step, offer the log + retry instead of a silent spinner.
+  useEffect(() => {
+    setSlow(false);
+    if (status === "ready") return;
+    const t = setTimeout(() => setSlow(true), 60000);
+    return () => clearTimeout(t);
+  }, [status, step]);
+
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [log, showLog]);
 
   useEffect(() => {
     backendStatus().then((b) => {
@@ -90,6 +105,31 @@ export default function Boot() {
               <p className="mt-2 text-center text-xs" style={{ color: "var(--muted)" }}>
                 First launch can take a minute while the engine warms up.
               </p>
+              <AnimatePresence>
+                {slow && (
+                  <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mt-2 flex flex-col items-center gap-2">
+                    <p className="text-center text-xs" style={{ color: "var(--accent)" }}>
+                      This is taking longer than usual. The engine log below shows what it is doing.
+                    </p>
+                    <div className="flex gap-2">
+                      <button className="btn h-8 text-xs" onClick={() => setShowLog((v) => !v)}>
+                        <TerminalSquare size={13} /> {showLog ? "Hide" : "Show"} full log
+                      </button>
+                      <button
+                        className="btn h-8 text-xs"
+                        onClick={() => {
+                          setStep(0);
+                          setStatus("starting");
+                          setLog([]);
+                          restartBackend();
+                        }}
+                      >
+                        <RefreshCw size={13} /> Restart engine
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.div>
           ) : (
             <motion.div key="err" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-2xl p-5">
@@ -121,13 +161,14 @@ export default function Boot() {
       <AnimatePresence>
         {(showLog || (!failed && log.length > 0 && step < 2)) && (
           <motion.pre
+            ref={logRef}
             initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: showLog ? 260 : 96 }}
+            animate={{ opacity: 1, height: showLog ? 300 : 110 }}
             exit={{ opacity: 0, height: 0 }}
             className="selectable w-full max-w-xl overflow-auto rounded-xl p-3 text-[11px] leading-relaxed glass"
             style={{ color: "var(--muted)", fontFamily: "var(--font-mono)" }}
           >
-            {log.slice(showLog ? -200 : -6).join("\n")}
+            {log.slice(showLog ? -400 : -8).join("\n")}
           </motion.pre>
         )}
       </AnimatePresence>

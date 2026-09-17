@@ -65,8 +65,25 @@ def main() -> None:
         if sys.stdin is not None and not sys.stdin.closed:
             threading.Thread(target=_watch_parent, daemon=True).start()
 
-    import uvicorn
-    from app import app  # noqa: WPS433 - import after env is prepared
+    # Startup watchdog: importing app.py wires up every subsystem (auth, RAG,
+    # embeddings, model discovery...). If any of those blocks - a slow import,
+    # a network probe that never times out - dump every thread's stack to
+    # stderr so the desktop "Engine" log shows exactly WHERE it is stuck
+    # instead of a silent spinner. Repeats every 45s until import completes.
+    import faulthandler
+    import time as _time
+
+    _t0 = _time.time()
+    sys.stderr.write("PSD_AI_PHASE importing app (this can take 10-60s on first launch)\n")
+    sys.stderr.flush()
+    faulthandler.dump_traceback_later(45, repeat=True, file=sys.stderr)
+    try:
+        import uvicorn
+        from app import app  # noqa: WPS433 - import after env is prepared
+    finally:
+        faulthandler.cancel_dump_traceback_later()
+    sys.stderr.write(f"PSD_AI_PHASE app imported in {_time.time() - _t0:.1f}s\n")
+    sys.stderr.flush()
 
     # Handshake for the shell. Flush so the pipe reader sees it immediately.
     sys.stdout.write(f"PSD_AI_READY port={port}\n")
