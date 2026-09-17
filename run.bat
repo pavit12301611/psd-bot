@@ -59,10 +59,14 @@ REM  1. Find Python 3.11+ (py launcher first, then plain python)
 REM ----------------------------------------------------------------
 echo  ==^> Looking for Python 3.11+...
 
+REM Prefer 3.12 / 3.13 / 3.11 (mature wheels for numpy, onnxruntime, etc.).
+REM 3.14 is accepted as a last resort but some native packages are still
+REM settling there, so it is tried after the others.
 set "PYCMD="
-py -3.13 -c "import sys" >nul 2>&1 && set "PYCMD=py -3.13"
-if not defined PYCMD py -3.12 -c "import sys" >nul 2>&1 && set "PYCMD=py -3.12"
+py -3.12 -c "import sys" >nul 2>&1 && set "PYCMD=py -3.12"
+if not defined PYCMD py -3.13 -c "import sys" >nul 2>&1 && set "PYCMD=py -3.13"
 if not defined PYCMD py -3.11 -c "import sys" >nul 2>&1 && set "PYCMD=py -3.11"
+if not defined PYCMD py -3.14 -c "import sys" >nul 2>&1 && set "PYCMD=py -3.14"
 if not defined PYCMD (
     python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1 && set "PYCMD=python"
 )
@@ -87,6 +91,10 @@ REM ----------------------------------------------------------------
 REM  2. Create the virtual environment (first run only)
 REM ----------------------------------------------------------------
 set "VENVPY=%APP_DIR%\venv\Scripts\python.exe"
+
+REM Sanity check: a venv whose numpy cannot even be imported (hangs / crashes)
+REM is useless - detect it (20s budget) and rebuild.
+if exist "%VENVPY%" if exist "venv\.deps_ok" call :check_venv
 
 if not exist "%VENVPY%" (
     echo  ==^> Creating virtual environment ^(venv^)...
@@ -277,3 +285,27 @@ echo       Starting desktop\src-tauri\target\release\psd-ai-desktop.exe
 echo.
 echo  psd.ai has closed.
 endlocal
+exit /b 0
+
+REM ---------------- subroutines ----------------
+:check_venv
+echo  ==^> Checking the virtual environment...
+if exist "venv\.np_ok" del /q "venv\.np_ok"
+set "OPENBLAS_NUM_THREADS=2"
+set "OMP_NUM_THREADS=2"
+start /b "" cmd /c ""%VENVPY%" -c "import numpy" >nul 2>&1 && echo ok> "venv\.np_ok""
+set /a _w=0
+:check_venv_wait
+if exist "venv\.np_ok" goto :check_venv_ok
+if %_w% geq 20 goto :check_venv_bad
+timeout /t 1 /nobreak >nul
+set /a _w+=1
+goto :check_venv_wait
+:check_venv_bad
+echo      numpy in the existing venv hangs or fails on this Python - rebuilding the venv.
+rmdir /s /q venv
+exit /b 0
+:check_venv_ok
+del /q "venv\.np_ok"
+echo       venv OK
+exit /b 0

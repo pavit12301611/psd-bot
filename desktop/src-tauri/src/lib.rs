@@ -154,6 +154,13 @@ fn spawn_backend(app: AppHandle) {
             .current_dir(&app_dir)
             .env("PYTHONUNBUFFERED", "1")
             .env("PYTHONIOENCODING", "utf-8")
+            // See desktop_server.py: keeps numpy/OpenBLAS from deadlocking on
+            // DLL load in a console-less child on hybrid-core Windows CPUs.
+            .env("OPENBLAS_NUM_THREADS", "2")
+            .env("OMP_NUM_THREADS", "2")
+            .env("MKL_NUM_THREADS", "2")
+            .env("OPENBLAS_MAIN_FREE", "1")
+            .env("TOKENIZERS_PARALLELISM", "false")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

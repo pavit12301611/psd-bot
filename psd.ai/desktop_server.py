@@ -53,6 +53,19 @@ def main() -> None:
     # The app resolves its own loopback base (agent tools, MCP OAuth, task
     # webhooks) from APP_PORT, so it must be set *before* app.py is imported.
     os.environ["APP_PORT"] = str(port)
+
+    # numpy / OpenBLAS / onnxruntime / tokenizers thread-pool hardening.
+    # On Windows the OpenBLAS bundled with numpy spins up one worker per
+    # logical CPU during DLL load; on hybrid P/E-core CPUs and inside a
+    # console-less child process (CREATE_NO_WINDOW) that init has been seen
+    # to deadlock forever (stack: numpy/_core/multiarray.py -> create_module).
+    # A small fixed pool sidesteps it and costs nothing for our workloads.
+    for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
+                 "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+        os.environ.setdefault(_var, "2")
+    os.environ.setdefault("OPENBLAS_MAIN_FREE", "1")
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+    os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
     os.environ.setdefault("APP_BIND", "127.0.0.1")
     # The desktop shell is the only client; keep auth on (the GUI owns the
     # setup / login screens) and never allow a loopback bypass.
