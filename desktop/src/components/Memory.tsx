@@ -13,6 +13,7 @@ export default function Memory() {
   const [text, setText] = useState("");
   const [cat, setCat] = useState("fact");
   const [skillDraft, setSkillDraft] = useState({ title: "", problem: "", solution: "" });
+  const [skillUrl, setSkillUrl] = useState("");
 
   const loadMem = async () => {
     try {
@@ -110,7 +111,7 @@ export default function Memory() {
                   <button className="icon-btn h-8 w-8" title="Pin" onClick={async () => { await memApi.pin(m.id); loadMem(); }}>
                     <Pin size={14} style={{ color: m.pinned ? "var(--accent)" : undefined }} />
                   </button>
-                  <button className="icon-btn h-8 w-8 hover:!text-red-400" title="Delete" onClick={async () => { await memApi.remove(m.id); loadMem(); }}>
+                  <button className="icon-btn h-8 w-8 hover:!text-red-400" title="Delete" onClick={async () => { if (!window.confirm("Forget this memory?")) return; await memApi.remove(m.id); loadMem(); }}>
                     <Trash2 size={14} />
                   </button>
                 </div>
@@ -127,6 +128,19 @@ export default function Memory() {
               <button className="btn btn-primary self-start" disabled={!skillDraft.title.trim() || !skillDraft.solution.trim()} onClick={addSkill}>
                 <Zap size={14} /> Add skill
               </button>
+              <div className="flex gap-2">
+                <input className="input flex-1" placeholder="Import skill from URL" value={skillUrl} onChange={(e) => setSkillUrl(e.target.value)} />
+                <button className="btn" disabled={!skillUrl.trim()} onClick={async () => {
+                  try {
+                    await skillApi.importUrl(skillUrl.trim());
+                    setSkillUrl("");
+                    toast("Skill imported", "success");
+                    loadSkills();
+                  } catch (e: any) {
+                    toast(e.message || "Import failed", "error");
+                  }
+                }}>Import</button>
+              </div>
             </div>
             {skills.length === 0 && <Empty icon={<Zap size={32} />} title="No skills yet" hint="Reusable procedures the agent can call with /skill-name." />}
             <div className="flex flex-col gap-2">

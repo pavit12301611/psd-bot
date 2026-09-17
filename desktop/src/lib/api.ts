@@ -68,6 +68,10 @@ export interface Session {
 }
 export const sessions = {
   list: () => get<Session[]>("/api/sessions"),
+  listArchived: (opts: { search?: string; offset?: number; limit?: number; sort?: string } = {}) =>
+    get<{ sessions: Session[]; total: number }>(
+      `/api/sessions/archived${qs({ search: opts.search, offset: opts.offset ?? 0, limit: opts.limit ?? 40, sort: opts.sort || "recent" })}`,
+    ),
   create: (opts: { name: string; model?: string; endpoint_url?: string; endpoint_id?: string }) =>
     postForm<Session>("/api/session", {
       name: opts.name,
@@ -77,17 +81,22 @@ export const sessions = {
       skip_validation: "true",
     }),
   rename: (id: string, name: string) => patchForm(`/api/session/${id}`, { name }),
+  setFolder: (id: string, folder: string) => patchForm(`/api/session/${id}`, { folder }),
   setModel: (id: string, model: string, endpoint_id: string, endpoint_url: string) =>
     patchForm(`/api/session/${id}`, { model, endpoint_id, endpoint_url }),
   remove: (id: string) => del(`/api/session/${id}`),
+  bulkDelete: (ids: string[]) => postJson<{ deleted: number }>("/api/sessions/bulk-delete", { ids }),
   archive: (id: string) => postJson(`/api/session/${id}/archive`, {}),
   unarchive: (id: string) => postJson(`/api/session/${id}/unarchive`, {}),
   important: (id: string, important: boolean) =>
     postForm(`/api/session/${id}/important`, { important: String(important) }),
-  export: (id: string, fmt: "md" | "json" = "md") =>
+  export: (id: string, fmt: "md" | "json" | "txt" | "html" = "md") =>
     request({ method: "GET", path: `/api/session/${id}/export?fmt=${fmt}` }),
   compact: (id: string) => postJson(`/api/session/${id}/compact`, {}),
-  contextInfo: (id: string) => get<{ used?: number; limit?: number; percent?: number }>(`/api/session/${id}/context_info`),
+  inject: (id: string, messages: { role: string; content: any; metadata?: any }[]) =>
+    postJson(`/api/session/${id}/inject_messages`, { messages }),
+  autoSort: (skipLlm = false) => postJson<any>(`/api/sessions/auto-sort${qs({ skip_llm: skipLlm })}`, {}),
+  contextInfo: (id: string) => get<{ context_length?: number | null; model?: string }>(`/api/session/${id}/context_info`),
 };
 
 // ---------- history ----------
@@ -200,6 +209,9 @@ export const cookbook = {
   taskStatus: () => get<{ tasks: CookbookTaskStatus[] }>("/api/cookbook/tasks/status"),
   ollamaLibrary: () => get<{ models: OllamaLibModel[]; error?: string }>("/api/cookbook/ollama/library"),
   hfLatest: (limit = 12) => get<{ models: any[]; error?: string }>(`/api/cookbook/hf-latest?limit=${limit}`),
+  hfGgufFiles: (repo_id: string) =>
+    get<{ files?: string[]; gguf_files?: string[]; error?: string }>(`/api/cookbook/hf-gguf-files${qs({ repo_id })}`),
+  killPid: (pid: number) => postJson("/api/cookbook/kill-pid", { pid }),
 };
 export const hwfit = {
   system: () => get<any>("/api/hwfit/system"),
@@ -549,6 +561,14 @@ export const email = {
   remove: (uid: string, folder = "INBOX") =>
     request({ method: "DELETE", path: `/api/email/delete/${uid}${qs({ folder })}` }),
   unread: () => get<{ unread?: number; count?: number }>("/api/email/unread-state"),
+  folders: (account_id?: string) => get<{ folders?: any[] }>(`/api/email/folders${qs({ account_id })}`),
+  createAccount: (body: Record<string, unknown>) => postJson("/api/email/accounts", body),
+  updateAccount: (id: string, body: Record<string, unknown>) => putJson(`/api/email/accounts/${id}`, body),
+  removeAccount: (id: string) => del(`/api/email/accounts/${id}`),
+  testAccount: (body: Record<string, unknown>) => postJson("/api/email/accounts/test", body),
+  setDefaultAccount: (id: string) => postJson(`/api/email/accounts/${id}/set-default`, {}),
+  reply: (uid: string, body: { to?: string; subject?: string; body: string; folder?: string; account_id?: string }) =>
+    postJson(`/api/email/send`, { ...body, in_reply_to: uid }),
 };
 
 // ---------- search ----------

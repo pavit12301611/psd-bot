@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Plus, Trash2, CalendarDays } from "lucide-re
 import { calendar as api, type CalEvent } from "../lib/api";
 import { useApp } from "../store/app";
 import { Empty, PanelHead } from "./media";
+import { localYmd, parseDate } from "../lib/ui";
 
 function startOfMonth(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -54,8 +55,8 @@ export default function CalendarView() {
   }, [cursor]);
 
   const byDay = (d: Date) => {
-    const key = d.toISOString().slice(0, 10);
-    return events.filter((e) => (e.dtstart || "").slice(0, 10) === key);
+    const key = localYmd(d);
+    return events.filter((e) => localYmd(parseDate(e.dtstart)) === key);
   };
 
   const create = async () => {
@@ -73,7 +74,7 @@ export default function CalendarView() {
     }
   };
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localYmd(new Date());
 
   return (
     <section className="panel">
@@ -99,7 +100,7 @@ export default function CalendarView() {
         </div>
         <div className="cal-grid">
           {cells.map(({ date, inMonth }) => {
-            const key = date.toISOString().slice(0, 10);
+            const key = localYmd(date);
             const dayEvents = byDay(date);
             return (
               <button
@@ -153,7 +154,7 @@ export default function CalendarView() {
                   </button>
                 </div>
                 <p className="text-[13px]" style={{ color: "var(--muted)" }}>
-                  {new Date(editing.dtstart).toLocaleString()}
+                  {parseDate(editing.dtstart).toLocaleString()}
                   {editing.location ? ` · ${editing.location}` : ""}
                 </p>
                 {editing.description && <p className="mt-2 text-[13px]">{editing.description}</p>}

@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Plus, Search, MessageSquare, Trash2, Pencil, Settings, LogOut, Check, X, HardDrive, StickyNote, ListTodo, CalendarDays, Brain, Images, Library, Telescope, Columns2, Mail, Star } from "lucide-react";
-import { useApp, type AppView } from "../store/app";
+import { Plus, Search, MessageSquare, Trash2, Pencil, Settings, LogOut, Check, X, Star, Archive, Folder } from "lucide-react";
+import { useApp } from "../store/app";
+import { metaLabel } from "../lib/ui";
 
 function groupLabel(ts?: string) {
   if (!ts) return "Older";
@@ -24,10 +25,12 @@ export default function Sidebar() {
   const rename = useApp((s) => s.renameSession);
   const setSettings = useApp((s) => s.setSettings);
   const setPalette = useApp((s) => s.setPalette);
-  const setView = useApp((s) => s.setView);
   const logout = useApp((s) => s.logout);
   const user = useApp((s) => s.authStatus?.username);
   const streaming = useApp((s) => s.streaming);
+  const archiveSession = useApp((s) => s.archiveSession);
+  const bulkDelete = useApp((s) => s.bulkDeleteSessions);
+  const setFolder = useApp((s) => s.setSessionFolder);
   // Filter in useMemo, not the zustand selector — a new array every snapshot
   // makes useSyncExternalStore loop ("Maximum update depth exceeded").
   const important = useMemo(() => sessions.filter((x) => x.is_important && !x.archived), [sessions]);
@@ -35,6 +38,8 @@ export default function Sidebar() {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   const groups = useMemo(() => {
     const filtered = sessions.filter((s) => !s.archived && (!q || s.name.toLowerCase().includes(q.toLowerCase())));
@@ -49,6 +54,18 @@ export default function Sidebar() {
     return out;
   }, [sessions, q]);
 
+  const folders = useMemo(() => {
+    const map = new Map<string, typeof sessions>();
+    for (const s of sessions) {
+      if (s.archived || (q && !s.name.toLowerCase().includes(q.toLowerCase()))) continue;
+      const f = s.folder?.trim();
+      if (!f) continue;
+      if (!map.has(f)) map.set(f, []);
+      map.get(f)!.push(s);
+    }
+    return [...map.entries()];
+  }, [sessions, q]);
+
   return (
     <aside className="flex h-full w-[272px] shrink-0 flex-col" style={{ borderRight: "1px solid var(--border)", background: "color-mix(in oklab, var(--bg-elev) 55%, transparent)" }}>
       <div className="flex flex-col gap-2 p-3">
@@ -57,7 +74,7 @@ export default function Sidebar() {
         </button>
         <button className="btn h-9 w-full justify-start text-[13px]" onClick={() => setPalette(true)}>
           <Search size={14} /> Search
-          <kbd className="ml-auto rounded px-1.5 py-0.5 text-[10px]" style={{ background: "var(--bg-sunken)", color: "var(--muted)" }}>⌘K</kbd>
+          <kbd className="ml-auto rounded px-1.5 py-0.5 text-[10px]" style={{ background: "var(--bg-sunken)", color: "var(--muted)" }}>{metaLabel}+K</kbd>
         </button>
         <div className="relative">
           <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--muted)" }} />
@@ -65,31 +82,29 @@ export default function Sidebar() {
         </div>
       </div>
 
-      <div className="px-2 pb-2">
-        <div className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--muted)" }}>
-          Tools
+      {picked.length > 0 && (
+        <div className="flex items-center gap-1 px-3 pb-2">
+          <span className="text-[11px]" style={{ color: "var(--muted)" }}>{picked.length} selected</span>
+          <button className="btn h-7 px-2 text-[11px]" onClick={() => { picked.forEach((id) => archiveSession(id)); setPicked([]); }}>Archive</button>
+          <button className="btn h-7 px-2 text-[11px] text-red-400" onClick={() => { if (window.confirm(`Delete ${picked.length} chats?`)) bulkDelete(picked); setPicked([]); }}>Delete</button>
+          <button className="icon-btn h-7 w-7" onClick={() => setPicked([])}><X size={12} /></button>
         </div>
-        <div className="grid grid-cols-2 gap-0.5">
-          {([
-            ["models", HardDrive, "Models"],
-            ["notes", StickyNote, "Notes"],
-            ["tasks", ListTodo, "Tasks"],
-            ["calendar", CalendarDays, "Calendar"],
-            ["memory", Brain, "Brain"],
-            ["gallery", Images, "Gallery"],
-            ["library", Library, "Library"],
-            ["research", Telescope, "Research"],
-            ["compare", Columns2, "Compare"],
-            ["email", Mail, "Email"],
-          ] as [AppView, typeof StickyNote, string][]).map(([id, Icon, label]) => (
-            <button key={id} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left text-[12px] hover:bg-[var(--accent-soft)]" style={{ color: "var(--muted)" }} onClick={() => setView(id)}>
-              <Icon size={13} /> {label}
-            </button>
-          ))}
-        </div>
-      </div>
+      )}
 
       <div className="flex-1 overflow-y-auto px-2 pb-2">
+        {folders.map(([name, items]) => (
+          <div key={name} className="mb-2">
+            <button className="flex w-full items-center gap-1.5 px-3 pb-1 pt-2 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--muted)" }} onClick={() => setCollapsed((c) => ({ ...c, [name]: !c[name] }))}>
+              <Folder size={11} /> {name}
+              <span className="ml-auto">{items.length}</span>
+            </button>
+            {!collapsed[name] && items.map((s) => (
+              <button key={s.id} className="flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-left text-[13px] hover:bg-[var(--accent-soft)]" onClick={() => select(s.id)} onContextMenu={(e) => { e.preventDefault(); setFolder(s.id, ""); }}>
+                <span className="truncate">{s.name}</span>
+              </button>
+            ))}
+          </div>
+        ))}
         {important.length > 0 && !q && (
           <div className="mb-2">
             <div className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--muted)" }}>
@@ -131,7 +146,14 @@ export default function Sidebar() {
                     {isActive && <motion.div layoutId="active-pill" className="absolute inset-0 rounded-xl" style={{ background: "var(--accent-soft)" }} transition={{ type: "spring", stiffness: 500, damping: 40 }} />}
                     <div
                       className="relative flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-[13px] transition-colors hover:bg-[var(--accent-soft)]/50"
-                      onClick={() => !isEditing && select(s.id)}
+                      onClick={(e) => {
+                        if (isEditing) return;
+                        if (e.metaKey || e.ctrlKey || e.shiftKey) {
+                          setPicked((p) => (p.includes(s.id) ? p.filter((id) => id !== s.id) : [...p, s.id]));
+                          return;
+                        }
+                        select(s.id);
+                      }}
                       onDoubleClick={() => {
                         setEditing(s.id);
                         setDraft(s.name);
@@ -178,6 +200,9 @@ export default function Sidebar() {
                           <span className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100">
                             <button className="icon-btn h-7 w-7" title="Rename" onClick={(e) => { e.stopPropagation(); setEditing(s.id); setDraft(s.name); }}>
                               <Pencil size={13} />
+                            </button>
+                            <button className="icon-btn h-7 w-7" title="Archive" onClick={(e) => { e.stopPropagation(); archiveSession(s.id); }}>
+                              <Archive size={13} />
                             </button>
                             <button className="icon-btn h-7 w-7 hover:!text-red-400" title="Delete" onClick={(e) => { e.stopPropagation(); setConfirmDel(s.id); }}>
                               <Trash2 size={13} />

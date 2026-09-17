@@ -11,6 +11,8 @@ export default function Email() {
   const [list, setList] = useState<EmailMsg[]>([]);
   const [active, setActive] = useState<any>(null);
   const [filter, setFilter] = useState("all");
+  const [folder, setFolder] = useState("INBOX");
+  const [folders, setFolders] = useState<string[]>(["INBOX"]);
   const [compose, setCompose] = useState(false);
   const [draft, setDraft] = useState({ to: "", subject: "", body: "" });
 
@@ -24,7 +26,7 @@ export default function Email() {
   };
   const loadList = async () => {
     try {
-      const r = await api.list({ filter, limit: 50 });
+      const r = await api.list({ filter, folder, limit: 50 });
       setList(r.emails || []);
     } catch (e: any) {
       toast(e.message || "Could not load inbox", "error");
@@ -35,8 +37,14 @@ export default function Email() {
     loadAccounts();
   }, []);
   useEffect(() => {
-    if (accounts.length) loadList();
-  }, [filter, accounts.length]);
+    if (accounts.length) {
+      loadList();
+      api.folders().then((r) => {
+        const names = (r.folders || []).map((f: any) => (typeof f === "string" ? f : f.name || f.id)).filter(Boolean);
+        if (names.length) setFolders(names);
+      }).catch(() => {});
+    }
+  }, [filter, folder, accounts.length]);
 
   const open = async (m: EmailMsg) => {
     try {
@@ -71,6 +79,11 @@ export default function Email() {
             </button>
           ))}
         </div>
+        <select className="input h-8 w-36 text-[12px]" value={folder} onChange={(e) => setFolder(e.target.value)}>
+          {folders.map((f) => (
+            <option key={f} value={f}>{f}</option>
+          ))}
+        </select>
         <button className="icon-btn h-8 w-8" onClick={loadList}>
           <RefreshCw size={14} />
         </button>
@@ -82,12 +95,12 @@ export default function Email() {
         <Empty
           icon={<Mail size={36} />}
           title="No email account"
-          hint="Connect IMAP/SMTP under Settings → Account, or add an account via the API. Once connected, your inbox shows up here."
-          action={<button className="btn btn-primary mt-2" onClick={() => setSettings(true)}>Open settings</button>}
+          hint="Connect IMAP/SMTP under Settings → Email. Once connected, your inbox shows up here."
+          action={<button className="btn btn-primary mt-2" onClick={() => setSettings(true, "email")}>Open settings</button>}
         />
       ) : (
         <div className="flex min-h-0 flex-1">
-          <div className="w-[320px] shrink-0 overflow-y-auto" style={{ borderRight: "1px solid var(--border)" }}>
+          <div className="split-side overflow-y-auto" style={{ borderRight: "1px solid var(--border)" }}>
             {list.length === 0 && <Empty icon={<MailOpen size={28} />} title="Inbox empty" />}
             {list.map((m) => (
               <button key={m.uid} className="flex w-full flex-col gap-0.5 px-4 py-3 text-left" style={{ background: active?.uid === m.uid ? "var(--accent-soft)" : "transparent", borderBottom: "1px solid var(--border)" }} onClick={() => open(m)}>
@@ -123,13 +136,32 @@ export default function Email() {
                     <h3 className="text-[16px] font-semibold">{active.subject || "(no subject)"}</h3>
                     <p className="text-[13px]" style={{ color: "var(--muted)" }}>{active.from || active.from_name} · {active.date ? new Date(active.date).toLocaleString() : ""}</p>
                   </div>
-                  <button className="icon-btn hover:!text-red-400" title="Delete" onClick={async () => { await api.remove(active.uid); setActive(null); loadList(); }}>
+                  <button className="btn h-8" onClick={() => {
+                    setCompose(true);
+                    setDraft({
+                      to: active.from || "",
+                      subject: (active.subject || "").startsWith("Re:") ? active.subject : `Re: ${active.subject || ""}`,
+                      body: `\n\n---\n${active.body || active.text || ""}`,
+                    });
+                  }}>Reply</button>
+                  <button className="icon-btn hover:!text-red-400" title="Delete" onClick={async () => { if (!window.confirm("Delete this message?")) return; await api.remove(active.uid, folder); setActive(null); loadList(); }}>
                     <Trash2 size={15} />
                   </button>
                 </div>
-                <div className="selectable flex-1 overflow-auto whitespace-pre-wrap rounded-2xl p-4 text-[14px] leading-relaxed" style={{ background: "var(--bg-sunken)" }}>
-                  {active.body || active.text || active.html || active.preview || ""}
-                </div>
+                {Array.isArray(active.attachments) && active.attachments.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1 text-[12px]" style={{ color: "var(--muted)" }}>
+                    {active.attachments.map((a: any, i: number) => (
+                      <span key={i} className="pill">{a.filename || a.name || `file ${i + 1}`}</span>
+                    ))}
+                  </div>
+                )}
+                {active.html ? (
+                  <iframe title="email" className="min-h-[240px] w-full flex-1 rounded-2xl" sandbox="allow-same-origin" srcDoc={active.html} />
+                ) : (
+                  <div className="selectable flex-1 overflow-auto whitespace-pre-wrap rounded-2xl p-4 text-[14px] leading-relaxed" style={{ background: "var(--bg-sunken)" }}>
+                    {active.body || active.text || active.preview || ""}
+                  </div>
+                )}
               </>
             )}
           </div>

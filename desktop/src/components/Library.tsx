@@ -6,6 +6,7 @@ import { Empty, PanelHead } from "./media";
 
 export default function Library() {
   const toast = useApp((s) => s.toast);
+  const setLibraryDirty = useApp((s) => s.setLibraryDirty);
   const [docs, setDocs] = useState<LibraryDoc[]>([]);
   const [active, setActive] = useState<LibraryDoc | null>(null);
   const [content, setContent] = useState("");
@@ -31,6 +32,7 @@ export default function Library() {
       setActive(full);
       setContent(full.current_content || d.preview || "");
       setDirty(false);
+      setLibraryDirty(false);
     } catch (e: any) {
       toast(e.message || "Could not open", "error");
     }
@@ -53,6 +55,7 @@ export default function Library() {
       await api.save(active.id, content);
       if (active.title) await api.rename(active.id, active.title);
       setDirty(false);
+      setLibraryDirty(false);
       toast("Saved", "success");
       load();
     } catch (e: any) {
@@ -69,11 +72,11 @@ export default function Library() {
         </button>
       </PanelHead>
       <div className="flex min-h-0 flex-1">
-        <div className="w-[280px] shrink-0 overflow-y-auto p-3" style={{ borderRight: "1px solid var(--border)" }}>
+        <div className="split-side overflow-y-auto p-3" style={{ borderRight: "1px solid var(--border)" }}>
           {docs.length === 0 && <Empty icon={<FileText size={28} />} title="No documents" hint="Drafts, exports, and files you save live here." action={<button className="btn btn-primary mt-2" onClick={create}>New document</button>} />}
           <div className="flex flex-col gap-1">
             {docs.map((d) => (
-              <button key={d.id} className="rounded-xl px-3 py-2.5 text-left" style={{ background: active?.id === d.id ? "var(--accent-soft)" : "transparent" }} onClick={() => open(d)}>
+              <button key={d.id} className="rounded-xl px-3 py-2.5 text-left" style={{ background: active?.id === d.id ? "var(--accent-soft)" : "transparent" }} onClick={() => { if (dirty && !window.confirm("Discard unsaved changes?")) return; open(d); }}>
                 <div className="truncate text-[13px] font-medium">{d.title || "Untitled"}</div>
                 <div className="truncate text-[11px]" style={{ color: "var(--muted)" }}>
                   {d.language || "text"} · {(d.preview || "").slice(0, 60)}
@@ -88,15 +91,15 @@ export default function Library() {
           ) : (
             <>
               <div className="mb-2 flex items-center gap-2">
-                <input className="input flex-1 font-semibold" value={active.title} onChange={(e) => { setActive({ ...active, title: e.target.value }); setDirty(true); }} />
+                <input className="input flex-1 font-semibold" value={active.title} onChange={(e) => { setActive({ ...active, title: e.target.value }); setDirty(true); setLibraryDirty(true); }} />
                 <button className="btn btn-primary h-9" disabled={!dirty} onClick={save}>
                   <Save size={14} /> Save
                 </button>
-                <button className="icon-btn hover:!text-red-400" onClick={async () => { await api.remove(active.id); setActive(null); load(); }}>
+                <button className="icon-btn hover:!text-red-400" onClick={async () => { if (!window.confirm("Delete this document?")) return; await api.remove(active.id); setActive(null); setLibraryDirty(false); load(); }}>
                   <Trash2 size={15} />
                 </button>
               </div>
-              <textarea className="input min-h-0 flex-1 resize-none font-mono text-[13px] leading-relaxed" value={content} onChange={(e) => { setContent(e.target.value); setDirty(true); }} placeholder="Write markdown…" />
+              <textarea className="input min-h-0 flex-1 resize-none font-mono text-[13px] leading-relaxed" value={content} onChange={(e) => { setContent(e.target.value); setDirty(true); setLibraryDirty(true); }} placeholder="Write markdown…" />
             </>
           )}
         </div>

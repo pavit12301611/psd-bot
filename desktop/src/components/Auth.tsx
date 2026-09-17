@@ -7,7 +7,13 @@ import { useApp } from "../store/app";
 export default function Auth({ mode }: { mode: "setup" | "login" }) {
   const refreshAuth = useApp((s) => s.refreshAuth);
   const authStatus = useApp((s) => s.authStatus);
-  const [username, setUsername] = useState("");
+  const [username, setUsername] = useState(() => {
+    try {
+      return localStorage.getItem("psd.username") || "";
+    } catch {
+      return "";
+    }
+  });
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [totp, setTotp] = useState("");
@@ -35,6 +41,11 @@ export default function Auth({ mode }: { mode: "setup" | "login" }) {
     try {
       if (mode === "setup") await auth.setup(username.trim(), password);
       else if (signup) await auth.signup(username.trim(), password);
+      try {
+        localStorage.setItem("psd.username", username.trim());
+      } catch {
+        /* ignore */
+      }
       const r = await auth.login(username.trim(), password, totp || undefined);
       if (r && r.requires_totp) {
         setNeedTotp(true);
@@ -114,6 +125,17 @@ export default function Auth({ mode }: { mode: "setup" | "login" }) {
             )}
           </AnimatePresence>
 
+          {creating && password && (
+            <div className="h-1.5 overflow-hidden rounded-full" style={{ background: "var(--bg-sunken)" }}>
+              <div
+                className="h-full rounded-full"
+                style={{
+                  width: `${Math.min(100, password.length * 8)}%`,
+                  background: password.length < minLen ? "#f87171" : password.length < minLen + 4 ? "#e5c07b" : "#34d399",
+                }}
+              />
+            </div>
+          )}
           <button className="btn btn-primary mt-1 h-11 w-full text-[15px]" disabled={busy || !username || !password}>
             {busy ? (
               <span className="dots">

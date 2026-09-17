@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { ArrowUp, Square, Paperclip, Globe, Terminal, MessageSquare, Bot, X, Mic, Database, Slash } from "lucide-react";
 import { useApp } from "../store/app";
 import { uploads, voice } from "../lib/api";
+import { MAX_UPLOAD_BYTES, metaLabel } from "../lib/ui";
 
 const SLASH: { token: string; label: string; run: (app: ReturnType<typeof useApp.getState>) => void }[] = [
   { token: "/models", label: "Open Models", run: (a) => a.setView("models") },
@@ -57,6 +58,20 @@ export default function Composer() {
     ta.current?.focus();
   }, [activeSessionId]);
 
+  useEffect(() => {
+    const onAttach = (e: Event) => {
+      const files = (e as CustomEvent<{ id: string; name: string }[]>).detail || [];
+      if (files.length) setFiles((p) => [...p, ...files]);
+    };
+    const onFocus = () => ta.current?.focus();
+    window.addEventListener("psd-attach", onAttach as EventListener);
+    window.addEventListener("psd-focus-composer", onFocus);
+    return () => {
+      window.removeEventListener("psd-attach", onAttach as EventListener);
+      window.removeEventListener("psd-focus-composer", onFocus);
+    };
+  }, []);
+
   const slashHits = text.startsWith("/")
     ? SLASH.filter((s) => s.token.startsWith(text.split(/\s/)[0].toLowerCase()))
     : [];
@@ -101,6 +116,10 @@ export default function Composer() {
     setUploading(true);
     try {
       for (const f of Array.from(list)) {
+        if (f.size > MAX_UPLOAD_BYTES) {
+          toast(`${f.name} is larger than 25 MB`, "error");
+          continue;
+        }
         const r = await uploads.send(f, activeSessionId || undefined);
         for (const x of r.files || []) setFiles((p) => [...p, { id: x.id, name: x.name || x.filename || f.name }]);
       }
@@ -193,7 +212,7 @@ export default function Composer() {
           onKeyDown={onKey}
         />
 
-        <div className="flex items-center gap-1 px-1 pb-0.5">
+        <div className="flex items-center gap-1 overflow-x-auto px-1 pb-0.5">
           <input ref={fileInput} type="file" multiple hidden onChange={(e) => pick(e.target.files)} />
           <button className="icon-btn" title="Attach files" onClick={() => fileInput.current?.click()} disabled={uploading}>
             <Paperclip size={16} className={uploading ? "animate-pulse" : ""} />
@@ -205,7 +224,7 @@ export default function Composer() {
           <div className="ml-1 flex rounded-full p-0.5" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
             {(["chat", "agent"] as const).map((m) => (
               <button key={m} className="relative flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors" style={{ color: mode === m ? "#fff" : "var(--muted)" }} onClick={() => setMode(m)}>
-                {mode === m && <motion.span layoutId="mode-pill" className="absolute inset-0 rounded-full" style={{ background: "linear-gradient(135deg, var(--accent), #c9505b)" }} transition={{ type: "spring", stiffness: 500, damping: 40 }} />}
+                {mode === m && <motion.span layoutId="chat-mode-pill" className="absolute inset-0 rounded-full" style={{ background: "linear-gradient(135deg, var(--accent), #c9505b)" }} transition={{ type: "spring", stiffness: 500, damping: 40 }} />}
                 <span className="relative flex items-center gap-1.5">
                   {m === "chat" ? <MessageSquare size={12} /> : <Bot size={12} />}
                   {m === "chat" ? "Chat" : "Agent"}
@@ -251,7 +270,7 @@ export default function Composer() {
         </div>
       </motion.div>
       <p className="mt-2 text-center text-[11px]" style={{ color: "var(--muted)" }}>
-        Enter to send · / for commands · Shift+Enter for a new line · Runs on your device
+        Enter to send · / for commands · Shift+Enter for a new line · {metaLabel}+L to focus · Runs on your device
       </p>
     </div>
   );

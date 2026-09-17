@@ -36,7 +36,10 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, St
             {detail}
           </pre>
           <div className="mt-4 flex gap-2">
-            <button className="btn btn-primary" onClick={() => window.location.reload()}>
+            <button className="btn btn-primary" onClick={() => this.setState({ error: null, info: "" })}>
+              Try again
+            </button>
+            <button className="btn" onClick={() => window.location.reload()}>
               Reload interface
             </button>
             <button className="btn" onClick={() => navigator.clipboard.writeText(detail).catch(() => {})}>

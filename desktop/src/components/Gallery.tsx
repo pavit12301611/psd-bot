@@ -25,6 +25,13 @@ export default function Gallery() {
     load();
   }, [favOnly]);
 
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: KeyboardEvent) => e.key === "Escape" && setOpen(null);
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [open]);
+
   const upload = async (files: FileList | null) => {
     if (!files?.length) return;
     try {
@@ -74,7 +81,7 @@ export default function Gallery() {
         </div>
       </div>
       {open && (
-        <div className="absolute inset-0 z-40 flex items-center justify-center p-8" style={{ background: "rgba(0,0,0,.55)", backdropFilter: "blur(8px)" }} onMouseDown={(e) => e.target === e.currentTarget && setOpen(null)}>
+        <div className="fixed inset-0 z-[85] flex items-center justify-center p-8" style={{ background: "rgba(0,0,0,.55)", backdropFilter: "blur(8px)" }} onMouseDown={(e) => e.target === e.currentTarget && setOpen(null)} onKeyDown={(e) => e.key === "Escape" && setOpen(null)}>
           <div className="glass max-h-full w-full max-w-3xl overflow-auto rounded-3xl p-4">
             <div className="mb-3 flex items-center gap-2">
               <div className="min-w-0 flex-1 truncate text-[13px]" style={{ color: "var(--muted)" }}>

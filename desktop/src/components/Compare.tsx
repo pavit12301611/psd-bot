@@ -15,6 +15,8 @@ interface Pane {
 export default function Compare() {
   const toast = useApp((s) => s.toast);
   const items = useApp((s) => s.modelItems);
+  const setCompareBusy = useApp((s) => s.setCompareBusy);
+  const streaming = useApp((s) => s.streaming);
   const models = useMemo(
     () =>
       items.flatMap((i) =>
@@ -36,9 +38,18 @@ export default function Compare() {
 
   const run = async () => {
     if (!prompt.trim() || models.length < 2) return;
+    if (streaming) {
+      toast("Wait for the chat reply to finish", "info");
+      return;
+    }
     const left = models[a];
     const right = models[b];
     if (!left || !right) return;
+    if (left.model === right.model && left.endpoint_url === right.endpoint_url) {
+      toast("Pick two different models", "info");
+      return;
+    }
+    setCompareBusy(true);
     try {
       const r = await api.start({
         prompt: prompt.trim(),
@@ -104,6 +115,7 @@ export default function Compare() {
                 if (!cur) return cur;
                 const next = [...cur] as [Pane, Pane];
                 next[idx] = { ...next[idx], streaming: false };
+                if (!next[0].streaming && !next[1].streaming) useApp.getState().setCompareBusy(false);
                 return next;
               });
             },
@@ -111,6 +123,7 @@ export default function Compare() {
         );
       });
     } catch (e: any) {
+      setCompareBusy(false);
       toast(e.message || "Could not start comparison", "error");
     }
   };

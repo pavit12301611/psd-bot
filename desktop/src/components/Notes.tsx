@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus, Pin, Trash2, Archive, StickyNote, CheckSquare, Square } from "lucide-react";
 import { notes as api, type Note } from "../lib/api";
 import { useApp } from "../store/app";
@@ -39,15 +39,21 @@ export default function Notes() {
     }
   };
 
-  const save = async (patch: Partial<Note>) => {
+  const saveTimer = useRef<number | null>(null);
+  const save = async (patch: Partial<Note>, immediate = false) => {
     if (!active) return;
-    try {
-      const n = await api.update(active.id, patch);
-      setActive(n);
-      setList((xs) => xs.map((x) => (x.id === n.id ? n : x)));
-    } catch (e: any) {
-      toast(e.message || "Save failed", "error");
-    }
+    const run = async () => {
+      try {
+        const n = await api.update(active.id, patch);
+        setActive((cur) => (cur && cur.id === n.id ? { ...cur, ...n } : cur));
+        setList((xs) => xs.map((x) => (x.id === n.id ? n : x)));
+      } catch (e: any) {
+        toast(e.message || "Save failed", "error");
+      }
+    };
+    if (immediate) return run();
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(run, 400);
   };
 
   return (
@@ -61,7 +67,7 @@ export default function Notes() {
         </button>
       </PanelHead>
       <div className="flex min-h-0 flex-1">
-        <div className="w-[280px] shrink-0 overflow-y-auto p-3" style={{ borderRight: "1px solid var(--border)" }}>
+        <div className="split-side overflow-y-auto p-3" style={{ borderRight: "1px solid var(--border)" }}>
           {list.length === 0 && (
             <Empty icon={<StickyNote size={28} />} title={archived ? "No archived notes" : "No notes yet"} hint="Capture thoughts, checklists, and reminders." action={!archived ? <button className="btn btn-primary mt-2" onClick={create}>Create one</button> : undefined} />
           )}
@@ -93,14 +99,14 @@ export default function Notes() {
           ) : (
             <>
               <div className="mb-3 flex items-center gap-2">
-                <input className="input flex-1 text-[16px] font-semibold" value={active.title} onChange={(e) => setActive({ ...active, title: e.target.value })} onBlur={() => save({ title: active.title })} placeholder="Title" />
+                <input className="input flex-1 text-[16px] font-semibold" value={active.title} onChange={(e) => { const title = e.target.value; setActive({ ...active, title }); save({ title }); }} onBlur={() => save({ title: active.title }, true)} placeholder="Title" />
                 <button className="icon-btn" title="Pin" onClick={async () => { await api.pin(active.id); load(); }}>
                   <Pin size={15} style={{ color: active.pinned ? "var(--accent)" : undefined }} />
                 </button>
                 <button className="icon-btn" title="Archive" onClick={async () => { await api.archive(active.id); setActive(null); load(); }}>
                   <Archive size={15} />
                 </button>
-                <button className="icon-btn hover:!text-red-400" title="Delete" onClick={async () => { await api.remove(active.id); setActive(null); load(); }}>
+                <button className="icon-btn hover:!text-red-400" title="Delete" onClick={async () => { if (!window.confirm("Delete this note?")) return; await api.remove(active.id); setActive(null); load(); }}>
                   <Trash2 size={15} />
                 </button>
               </div>
@@ -118,8 +124,8 @@ export default function Notes() {
                 <textarea
                   className="input min-h-0 flex-1 resize-none py-3"
                   value={active.content || ""}
-                  onChange={(e) => setActive({ ...active, content: e.target.value })}
-                  onBlur={() => save({ content: active.content || "" })}
+                  onChange={(e) => { const content = e.target.value; setActive({ ...active, content }); save({ content }); }}
+                  onBlur={() => save({ content: active.content || "" }, true)}
                   placeholder="Write something…"
                 />
               )}

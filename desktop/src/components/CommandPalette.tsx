@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { motion, AnimatePresence } from "motion/react";
 import {
   Search,
   MessageSquare,
@@ -18,6 +17,8 @@ import {
 } from "lucide-react";
 import { useApp, type AppView } from "../store/app";
 import { search as searchApi } from "../lib/api";
+import Overlay from "./Overlay";
+import { openExternal } from "../lib/ui";
 
 const JUMP: { id: AppView; label: string; icon: typeof MessageSquare; keys: string }[] = [
   { id: "chat", label: "Chat", icon: MessageSquare, keys: "chat conversations" },
@@ -81,28 +82,14 @@ export default function CommandPalette() {
   };
 
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          className="absolute inset-0 z-[70] flex items-start justify-center pt-[12vh] px-4"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          style={{ background: "rgba(0,0,0,.4)", backdropFilter: "blur(6px)" }}
-          onMouseDown={(e) => e.target === e.currentTarget && close()}
-        >
-          <motion.div
-            initial={{ opacity: 0, y: 10, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.98 }}
-            className="glass w-full max-w-xl overflow-hidden rounded-2xl"
-            style={{ boxShadow: "var(--shadow)" }}
-          >
+    <Overlay open={open} onClose={close} labelledBy="palette-title">
+          <div className="glass w-full max-w-xl overflow-hidden rounded-2xl" style={{ boxShadow: "var(--shadow)" }}>
             <div className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: "1px solid var(--border)" }}>
               <Search size={16} style={{ color: "var(--muted)" }} />
               <input
                 autoFocus
                 className="h-10 flex-1 bg-transparent text-[15px] outline-none"
+                id="palette-title"
                 placeholder="Search chats, jump to a tool, or search the web…"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
@@ -185,15 +172,13 @@ export default function CommandPalette() {
                 <Group label="Web results">
                   {webHits.length === 0 && <div className="px-3 py-2 text-[12px]" style={{ color: "var(--muted)" }}>No results</div>}
                   {webHits.slice(0, 6).map((s, i) => (
-                    <Row key={i} icon={<Globe size={14} />} label={s.title || s.url || "Result"} hint={s.snippet} onClick={() => s.url && window.open(s.url, "_blank")} />
+                    <Row key={i} icon={<Globe size={14} />} label={s.title || s.url || "Result"} hint={s.snippet} onClick={() => s.url && openExternal(s.url)} />
                   ))}
                 </Group>
               )}
             </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+          </div>
+    </Overlay>
   );
 }
 

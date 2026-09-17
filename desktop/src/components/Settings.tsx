@@ -1,40 +1,36 @@
 import { useEffect, useState } from "react";
-import { motion, AnimatePresence } from "motion/react";
-import { X, Server, KeyRound, Info, Plus, Trash2, RefreshCw, Sun, Moon, TerminalSquare, Search, Keyboard, HardDrive } from "lucide-react";
+import { motion } from "motion/react";
+import { X, Server, KeyRound, Info, Plus, Trash2, RefreshCw, TerminalSquare, Search, Keyboard, HardDrive, Mail, Type } from "lucide-react";
 import { useApp } from "../store/app";
-import { auth, endpoints as epApi, search as searchApi, type Endpoint } from "../lib/api";
+import { auth, endpoints as epApi, search as searchApi, email as emailApi, type Endpoint } from "../lib/api";
 import { backendStatus, inTauri, restartBackend } from "../lib/ipc";
+import Overlay from "./Overlay";
+import { THEMES } from "../lib/ui";
 
-type Tab = "models" | "search" | "account" | "engine" | "about";
+type Tab = "models" | "search" | "account" | "appearance" | "email" | "engine" | "about";
 
 export default function Settings() {
   const open = useApp((s) => s.settingsOpen);
   const close = () => useApp.getState().setSettings(false);
-  const [tab, setTab] = useState<Tab>("models");
+  const tab = (useApp((s) => s.settingsTab) || "models") as Tab;
+  const setTab = (t: Tab) => useApp.getState().setSettingsTab(t);
   const isAdmin = useApp((s) => s.authStatus?.is_admin);
-
-  useEffect(() => {
-    if (!open) return;
-    const h = (e: globalThis.KeyboardEvent) => e.key === "Escape" && close();
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [open]);
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: "models", label: "Models", icon: <Server size={15} /> },
     { id: "search", label: "Search", icon: <Search size={15} /> },
     { id: "account", label: "Account", icon: <KeyRound size={15} /> },
+    { id: "appearance", label: "Appearance", icon: <Type size={15} /> },
+    { id: "email", label: "Email", icon: <Mail size={15} /> },
     { id: "engine", label: "Engine", icon: <TerminalSquare size={15} /> },
     { id: "about", label: "About", icon: <Info size={15} /> },
   ];
 
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.div className="absolute inset-0 z-50 flex items-center justify-center p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ background: "rgba(0,0,0,.45)", backdropFilter: "blur(6px)" }} onMouseDown={(e) => e.target === e.currentTarget && close()}>
-          <motion.div initial={{ opacity: 0, scale: 0.96, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 10 }} transition={{ type: "spring", stiffness: 420, damping: 34 }} className="flex h-[min(640px,90vh)] w-full max-w-3xl overflow-hidden rounded-3xl" style={{ background: "var(--bg-elev)", border: "1px solid var(--border)", boxShadow: "var(--shadow)" }}>
+    <Overlay open={open} onClose={close} labelledBy="settings-title">
+          <div className="flex h-[min(640px,90vh)] w-full max-w-3xl overflow-hidden rounded-3xl" style={{ background: "var(--bg-elev)", border: "1px solid var(--border)", boxShadow: "var(--shadow)" }}>
             <nav className="flex w-48 shrink-0 flex-col gap-1 p-3" style={{ borderRight: "1px solid var(--border)", background: "var(--bg-sunken)" }}>
-              <div className="px-2 pb-3 pt-1 text-base font-semibold">Settings</div>
+              <div id="settings-title" className="px-2 pb-3 pt-1 text-base font-semibold">Settings</div>
               {tabs.map((t) => (
                 <button key={t.id} className="relative flex items-center gap-2 rounded-xl px-3 py-2 text-left text-[13px] font-medium transition-colors" style={{ color: tab === t.id ? "var(--text)" : "var(--muted)" }} onClick={() => setTab(t.id)}>
                   {tab === t.id && <motion.span layoutId="settings-tab" className="absolute inset-0 rounded-xl" style={{ background: "var(--accent-soft)" }} />}
@@ -52,14 +48,14 @@ export default function Settings() {
                 {tab === "models" && <ModelsTab isAdmin={!!isAdmin} />}
                 {tab === "search" && <SearchTab />}
                 {tab === "account" && <AccountTab />}
+                {tab === "appearance" && <AppearanceTab />}
+                {tab === "email" && <EmailAccountsTab />}
                 {tab === "engine" && <EngineTab />}
                 {tab === "about" && <AboutTab />}
               </div>
             </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+          </div>
+    </Overlay>
   );
 }
 
@@ -189,6 +185,7 @@ function SearchTab() {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<any[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [config, setConfig] = useState<any>(null);
   const toast = useApp((s) => s.toast);
 
   useEffect(() => {
@@ -196,6 +193,7 @@ function SearchTab() {
       .providers()
       .then((r) => setProviders(Array.isArray(r) ? r : (r as any).providers || []))
       .catch(() => setProviders([]));
+    searchApi.config().then(setConfig).catch(() => {});
   }, []);
 
   const run = async () => {
@@ -214,7 +212,12 @@ function SearchTab() {
 
   return (
     <>
-      <Section title="Web search providers" desc="Used by the Web toggle in chat and by Deep Research.">
+      <Section title="Web search providers" desc="API keys are set on the engine (environment / prefs). This list shows which providers are ready.">
+        {config && (
+          <p className="mb-2 text-[12px]" style={{ color: "var(--muted)" }}>
+            Active provider: {config.provider || config.search_provider || "auto"}
+          </p>
+        )}
         <div className="flex flex-col gap-1.5">
           {providers.length === 0 && <p className="text-[13px]" style={{ color: "var(--muted)" }}>No provider list yet. DuckDuckGo works without a key.</p>}
           {providers.map((p) => (
@@ -246,10 +249,93 @@ function SearchTab() {
   );
 }
 
+function AppearanceTab() {
+  const theme = useApp((s) => s.theme);
+  const setTheme = useApp((s) => s.setTheme);
+  const fontScale = useApp((s) => s.fontScale);
+  const setFontScale = useApp((s) => s.setFontScale);
+  const density = useApp((s) => s.density);
+  const setDensity = useApp((s) => s.setDensity);
+  return (
+    <>
+      <Section title="Theme">
+        <div className="flex flex-wrap gap-2">
+          {THEMES.map((t) => (
+            <button key={t.id} className="pill" data-on={theme === t.id} onClick={() => setTheme(t.id)}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </Section>
+      <Section title="Text size" desc="Applies to the whole interface.">
+        <input type="range" min={13} max={20} value={fontScale} onChange={(e) => setFontScale(Number(e.target.value))} />
+        <div className="mt-1 text-[12px]" style={{ color: "var(--muted)" }}>{fontScale}px</div>
+      </Section>
+      <Section title="Density">
+        <div className="flex gap-2">
+          <button className="pill" data-on={density === "comfortable"} onClick={() => setDensity("comfortable")}>Comfortable</button>
+          <button className="pill" data-on={density === "compact"} onClick={() => setDensity("compact")}>Compact</button>
+        </div>
+      </Section>
+    </>
+  );
+}
+
+function EmailAccountsTab() {
+  const toast = useApp((s) => s.toast);
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [form, setForm] = useState({ name: "", from_address: "", imap_host: "", imap_user: "", imap_password: "", smtp_host: "" });
+  const refresh = () => emailApi.accounts().then((r) => setAccounts(r.accounts || [])).catch(() => setAccounts([]));
+  useEffect(() => { refresh(); }, []);
+  return (
+    <>
+      <Section title="Mailboxes" desc="IMAP/SMTP accounts used by the Email view.">
+        {accounts.length === 0 && <p className="text-[13px]" style={{ color: "var(--muted)" }}>No accounts yet.</p>}
+        <div className="flex flex-col gap-2">
+          {accounts.map((a) => (
+            <div key={a.id} className="flex items-center gap-2 rounded-xl px-3 py-2" style={{ border: "1px solid var(--border)" }}>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[13px] font-medium">{a.name || a.from_address}</div>
+                <div className="truncate text-[12px]" style={{ color: "var(--muted)" }}>{a.from_address} {a.is_default ? "· default" : ""}</div>
+              </div>
+              <button className="btn h-7 text-[11px]" onClick={() => emailApi.setDefaultAccount(a.id).then(refresh)}>Default</button>
+              <button className="icon-btn hover:!text-red-400" onClick={() => emailApi.removeAccount(a.id).then(refresh)}><Trash2 size={14} /></button>
+            </div>
+          ))}
+        </div>
+      </Section>
+      <Section title="Add account">
+        <div className="flex max-w-md flex-col gap-2">
+          <input className="input" placeholder="Display name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          <input className="input" placeholder="From address" value={form.from_address} onChange={(e) => setForm({ ...form, from_address: e.target.value })} />
+          <input className="input" placeholder="IMAP host" value={form.imap_host} onChange={(e) => setForm({ ...form, imap_host: e.target.value })} />
+          <input className="input" placeholder="IMAP user" value={form.imap_user} onChange={(e) => setForm({ ...form, imap_user: e.target.value })} />
+          <input className="input" type="password" placeholder="IMAP password" value={form.imap_password} onChange={(e) => setForm({ ...form, imap_password: e.target.value })} />
+          <input className="input" placeholder="SMTP host" value={form.smtp_host} onChange={(e) => setForm({ ...form, smtp_host: e.target.value })} />
+          <button
+            className="btn btn-primary self-start"
+            disabled={!form.from_address || !form.imap_host}
+            onClick={async () => {
+              try {
+                await emailApi.createAccount(form);
+                toast("Account added", "success");
+                setForm({ name: "", from_address: "", imap_host: "", imap_user: "", imap_password: "", smtp_host: "" });
+                refresh();
+              } catch (e: any) {
+                toast(e.message || "Could not add account", "error");
+              }
+            }}
+          >
+            <Plus size={14} /> Save account
+          </button>
+        </div>
+      </Section>
+    </>
+  );
+}
+
 function AccountTab() {
   const user = useApp((s) => s.authStatus?.username);
-  const theme = useApp((s) => s.theme);
-  const toggleTheme = useApp((s) => s.toggleTheme);
   const toast = useApp((s) => s.toast);
   const [cur, setCur] = useState("");
   const [nw, setNw] = useState("");
@@ -258,11 +344,6 @@ function AccountTab() {
 
   return (
     <>
-      <Section title="Appearance">
-        <button className="btn" onClick={toggleTheme}>
-          {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />} Switch to {theme === "dark" ? "light" : "dark"} theme
-        </button>
-      </Section>
       <Section title="Change password" desc={`Signed in as ${user}`}>
         <div className="flex max-w-sm flex-col gap-2">
           <input className="input" type="password" placeholder="Current password" value={cur} onChange={(e) => setCur(e.target.value)} />

@@ -1,13 +1,18 @@
 import { useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Telescope, Plus, Trash2, Square, ExternalLink } from "lucide-react";
 import { research as api, type ResearchItem } from "../lib/api";
 import { useApp } from "../store/app";
 import { Empty, PanelHead } from "./media";
+import { openExternal } from "../lib/ui";
 
 export default function Research() {
   const toast = useApp((s) => s.toast);
+  const route = useApp((s) => s.route);
   const [items, setItems] = useState<ResearchItem[]>([]);
   const [query, setQuery] = useState("");
+  const [maxTime, setMaxTime] = useState(300);
   const [running, setRunning] = useState<string | null>(null);
   const [status, setStatus] = useState<any>(null);
   const [detail, setDetail] = useState<any>(null);
@@ -41,13 +46,16 @@ export default function Research() {
         /* still running */
       }
     }, 2000);
-    return () => clearInterval(t);
+    return () => {
+      clearInterval(t);
+      api.cancel(running).catch(() => {});
+    };
   }, [running]);
 
   const start = async () => {
     if (!query.trim()) return;
     try {
-      const r = await api.start(query.trim());
+      const r = await api.start(query.trim(), { max_time: maxTime, model: route?.model });
       setRunning(r.session_id);
       setStatus({ status: "running", query: r.query });
       setQuery("");
@@ -82,6 +90,10 @@ export default function Research() {
           </p>
           <div className="flex gap-2">
             <input className="input flex-1" placeholder="What should I research?" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && start()} disabled={!!running} />
+            <label className="flex items-center gap-2 text-[12px]" style={{ color: "var(--muted)" }}>
+              {Math.round(maxTime / 60)} min
+              <input type="range" min={60} max={900} step={30} value={maxTime} onChange={(e) => setMaxTime(Number(e.target.value))} />
+            </label>
             <button className="btn btn-primary" disabled={!query.trim() || !!running} onClick={start}>
               <Plus size={14} /> Start
             </button>
@@ -115,13 +127,15 @@ export default function Research() {
               <h3 className="font-semibold">{detail.query || "Report"}</h3>
               <button className="btn h-8" onClick={() => setDetail(null)}>Close</button>
             </div>
-            <div className="md whitespace-pre-wrap text-[13.5px] leading-relaxed">{detail.summary || detail.report || JSON.stringify(detail.stats || {}, null, 2)}</div>
+            <div className="md text-[13.5px] leading-relaxed">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{detail.summary || detail.report || JSON.stringify(detail.stats || {}, null, 2)}</ReactMarkdown>
+            </div>
             {Array.isArray(detail.sources) && detail.sources.length > 0 && (
               <ul className="mt-3 flex flex-col gap-1">
                 {detail.sources.slice(0, 12).map((s: any, i: number) => (
                   <li key={i} className="flex items-center gap-1.5 text-[13px]">
                     <ExternalLink size={12} style={{ color: "var(--muted)" }} />
-                    <a className="truncate hover:underline" style={{ color: "var(--accent)" }} href={s.url} onClick={(e) => { e.preventDefault(); if (s.url) window.open(s.url, "_blank"); }}>
+                    <a className="truncate hover:underline" style={{ color: "var(--accent)" }} href={s.url} onClick={(e) => { e.preventDefault(); if (s.url) openExternal(s.url); }}>
                       {s.title || s.url}
                     </a>
                   </li>

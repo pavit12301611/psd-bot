@@ -11,6 +11,8 @@ import {
   type ModelItem,
 } from "../lib/api";
 import type { StreamHandle } from "../lib/ipc";
+import { onUnauthorized } from "../lib/ipc";
+import { applyDensity, applyFontScale, applyTheme, urlsMatch } from "../lib/ui";
 
 export type Screen = "boot" | "setup" | "login" | "app";
 export type AppView =
@@ -25,6 +27,12 @@ export type AppView =
   | "research"
   | "compare"
   | "email";
+export type Density = "comfortable" | "compact";
+
+const VIEWS: AppView[] = [
+  "chat", "models", "notes", "tasks", "calendar", "memory",
+  "gallery", "library", "research", "compare", "email",
+];
 
 export interface ToolCall {
   id: string;
@@ -64,6 +72,7 @@ export interface Toast {
   id: number;
   kind: "info" | "error" | "success";
   text: string;
+  sticky?: boolean;
 }
 
 interface AppState {
@@ -71,6 +80,7 @@ interface AppState {
   authStatus: AuthStatus | null;
   bootError: string | null;
   version: string;
+  engineOffline: boolean;
 
   sessions: Session[];
   activeSessionId: string | null;
@@ -89,17 +99,21 @@ interface AppState {
   streaming: boolean;
   streamHandle: StreamHandle | null;
   runId: string;
+  compareBusy: boolean;
 
   view: AppView;
   sidebarOpen: boolean;
   settingsOpen: boolean;
+  settingsTab: string;
   paletteOpen: boolean;
   shortcutsOpen: boolean;
-  theme: "dark" | "light";
+  theme: string;
+  fontScale: number;
+  density: Density;
   toasts: Toast[];
-  engineOffline: boolean;
+  contextLimit: number | null;
+  libraryDirty: boolean;
 
-  // actions
   boot: () => Promise<void>;
   refreshAuth: () => Promise<AuthStatus>;
   logout: () => Promise<void>;
@@ -107,6 +121,11 @@ interface AppState {
   selectSession: (id: string | null) => Promise<void>;
   newChat: () => void;
   deleteSession: (id: string) => Promise<void>;
+  bulkDeleteSessions: (ids: string[]) => Promise<void>;
+  archiveSession: (id: string) => Promise<void>;
+  unarchiveSession: (id: string) => Promise<void>;
+  starSession: (id: string, on: boolean) => Promise<void>;
+  setSessionFolder: (id: string, folder: string) => Promise<void>;
   renameSession: (id: string, name: string) => Promise<void>;
   loadModels: (refresh?: boolean) => Promise<void>;
   setRoute: (r: ModelRoute) => void;
@@ -116,30 +135,97 @@ interface AppState {
   toggleBash: () => void;
   toggleRag: () => void;
   toggleIncognito: () => void;
-  setView: (v: AppView) => void;
-  setPalette: (v: boolean) => void;
-  setShortcuts: (v: boolean) => void;
   send: (text: string, attachments?: { id: string; name: string }[], approval?: { id: string; decision: string }) => Promise<void>;
   stop: () => Promise<void>;
+  continueReply: () => Promise<void>;
+  regenerate: () => Promise<void>;
+  editAndResend: (msgId: string, text: string) => Promise<void>;
+  forkChat: () => Promise<void>;
+  compactChat: () => Promise<void>;
+  refreshContext: () => Promise<void>;
+  setView: (v: AppView) => void;
   setSidebar: (v: boolean) => void;
-  setSettings: (v: boolean) => void;
+  setSettings: (v: boolean, tab?: string) => void;
+  setSettingsTab: (tab: string) => void;
+  setPalette: (v: boolean) => void;
+  setShortcuts: (v: boolean) => void;
+  closeOverlays: () => void;
   toggleTheme: () => void;
-  toast: (text: string, kind?: Toast["kind"]) => void;
+  setTheme: (t: string) => void;
+  setFontScale: (n: number) => void;
+  setDensity: (d: Density) => void;
+  setCompareBusy: (v: boolean) => void;
+  setLibraryDirty: (v: boolean) => void;
+  toast: (text: string, kind?: Toast["kind"], sticky?: boolean) => void;
   dismissToast: (id: number) => void;
+  pauseToast: (id: number) => void;
 }
 
 let msgSeq = 0;
-const mid = () => `m${Date.now().toString(36)}${(++msgSeq).toString(36)}`;
+const mid = () => {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `m${Date.now().toString(36)}${(++msgSeq).toString(36)}`;
+  }
+};
 let toastSeq = 0;
+const toastTimers = new Map<number, number>();
+let bootInflight: Promise<void> | null = null;
 
-const savedTheme = (localStorage.getItem("psd.theme") as "dark" | "light") || "dark";
-document.documentElement.dataset.theme = savedTheme;
+const savedTheme = (() => {
+  try {
+    return localStorage.getItem("psd.theme") || "dark";
+  } catch {
+    return "dark";
+  }
+})();
+applyTheme(savedTheme);
+
+function lsGet(key: string, fallback: string) {
+  try {
+    return localStorage.getItem(key) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+function lsSet(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* ignore */
+  }
+}
+
+function chatCapable(item: ModelItem) {
+  const t = (item.model_type || "llm").toLowerCase();
+  return t === "llm" || t === "image" || t === "vision" || t === "multimodal" || t === "vlm" || t === "";
+}
+
+function routeValid(r: ModelRoute | null | undefined, items: ModelItem[]) {
+  if (!r?.model || !r.endpoint_url) return false;
+  return items.some((i) => {
+    const models = [...(i.models || []), ...(i.models_extra || [])];
+    if (!models.includes(r.model)) return false;
+    if (r.endpoint_id && i.endpoint_id) return r.endpoint_id === i.endpoint_id;
+    return urlsMatch(i.url, r.endpoint_url);
+  });
+}
+
+function overlays(open: "settings" | "palette" | "shortcuts" | "none") {
+  return {
+    settingsOpen: open === "settings",
+    paletteOpen: open === "palette",
+    shortcutsOpen: open === "shortcuts",
+  };
+}
 
 export const useApp = create<AppState>((set, getState) => ({
   screen: "boot",
   authStatus: null,
   bootError: null,
   version: "",
+  engineOffline: false,
 
   sessions: [],
   activeSessionId: null,
@@ -149,57 +235,99 @@ export const useApp = create<AppState>((set, getState) => ({
   modelItems: [],
   route: null,
 
-  mode: (localStorage.getItem("psd.mode") as "chat" | "agent") || "chat",
-  web: localStorage.getItem("psd.web") === "1",
-  bash: localStorage.getItem("psd.bash") === "1",
-  rag: localStorage.getItem("psd.rag") === "1",
-  incognito: localStorage.getItem("psd.incognito") === "1",
+  mode: (lsGet("psd.mode", "chat") as "chat" | "agent") || "chat",
+  web: lsGet("psd.web", "0") === "1",
+  bash: lsGet("psd.bash", "0") === "1",
+  rag: lsGet("psd.rag", "0") === "1",
+  incognito: false,
 
   streaming: false,
   streamHandle: null,
   runId: "",
+  compareBusy: false,
 
-  view: "chat",
-  sidebarOpen: true,
+  view: ((): AppView => {
+    const v = lsGet("psd.view", "chat") as AppView;
+    return VIEWS.includes(v) ? v : "chat";
+  })(),
+  sidebarOpen: lsGet("psd.sidebar", "1") !== "0",
   settingsOpen: false,
+  settingsTab: lsGet("psd.settingsTab", "models"),
   paletteOpen: false,
   shortcutsOpen: false,
   theme: savedTheme,
+  fontScale: Number(lsGet("psd.font", "16")) || 16,
+  density: (lsGet("psd.density", "comfortable") as Density) || "comfortable",
   toasts: [],
-  engineOffline: false,
+  contextLimit: null,
+  libraryDirty: false,
 
-  toast: (text, kind = "info") => {
+  toast: (text, kind = "info", sticky = false) => {
     const id = ++toastSeq;
-    set((s) => ({ toasts: [...s.toasts, { id, kind, text }] }));
-    setTimeout(() => getState().dismissToast(id), 4500);
+    set((s) => ({ toasts: [...s.toasts, { id, kind, text, sticky }] }));
+    if (!sticky) {
+      const t = window.setTimeout(() => getState().dismissToast(id), 4500);
+      toastTimers.set(id, t);
+    }
   },
-  dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+  dismissToast: (id) => {
+    const t = toastTimers.get(id);
+    if (t) {
+      clearTimeout(t);
+      toastTimers.delete(id);
+    }
+    set((s) => ({ toasts: s.toasts.filter((x) => x.id !== id) }));
+  },
+  pauseToast: (id) => {
+    const t = toastTimers.get(id);
+    if (t) {
+      clearTimeout(t);
+      toastTimers.delete(id);
+    }
+  },
 
   boot: async () => {
-    try {
-      const [st, ver] = await Promise.all([auth.status(), misc.version().catch(() => ({ version: "" }))]);
-      set({ authStatus: st, version: ver.version || "" });
-      if (!st.configured) set({ screen: "setup" });
-      else if (!st.authenticated) set({ screen: "login" });
-      else {
-        set({ screen: "app" });
-        await Promise.all([getState().loadSessions(), getState().loadModels()]);
-      }
-    } catch (e: any) {
-      // Engine unreachable (browser preview, sidecar still warming up). Still
-      // open the workspace so every feature surface is visible and clickable.
-      set({
-        bootError: e?.message || String(e),
-        engineOffline: true,
-        screen: "app",
-        authStatus: { configured: true, authenticated: true, username: "you", is_admin: true },
+    if (bootInflight) return bootInflight;
+    bootInflight = (async () => {
+      applyFontScale(getState().fontScale);
+      applyDensity(getState().density);
+      onUnauthorized(() => {
+        const st = getState();
+        if (st.screen === "app") {
+          st.streamHandle?.cancel();
+          set({
+            screen: "login",
+            streaming: false,
+            streamHandle: null,
+            settingsOpen: false,
+            paletteOpen: false,
+          });
+          st.toast("Session expired — please sign in again", "error");
+        }
       });
+      try {
+        const [st, ver] = await Promise.all([auth.status(), misc.version().catch(() => ({ version: "" }))]);
+        set({ authStatus: st, version: ver.version || "", bootError: null, engineOffline: false });
+        if (!st.configured) set({ screen: "setup" });
+        else if (!st.authenticated) set({ screen: "login" });
+        else {
+          set({ screen: "app" });
+          await Promise.all([getState().loadSessions(), getState().loadModels()]);
+        }
+      } catch (e: any) {
+        set({ bootError: e?.message || String(e), engineOffline: true });
+      }
+    })();
+    try {
+      await bootInflight;
+    } finally {
+      bootInflight = null;
     }
   },
 
   refreshAuth: async () => {
     const st = await auth.status();
-    set({ authStatus: st });
+    set({ authStatus: st, engineOffline: false });
     if (st.authenticated) {
       set({ screen: "app" });
       await Promise.all([getState().loadSessions(), getState().loadModels()]);
@@ -210,7 +338,15 @@ export const useApp = create<AppState>((set, getState) => ({
   logout: async () => {
     getState().streamHandle?.cancel();
     await auth.logout().catch(() => {});
-    set({ screen: "login", sessions: [], messages: {}, activeSessionId: null, streaming: false, streamHandle: null, settingsOpen: false });
+    set({
+      screen: "login",
+      sessions: [],
+      messages: {},
+      activeSessionId: null,
+      streaming: false,
+      streamHandle: null,
+      ...overlays("none"),
+    });
   },
 
   loadSessions: async () => {
@@ -218,21 +354,38 @@ export const useApp = create<AppState>((set, getState) => ({
       const list = await sessionsApi.list();
       set({ sessions: Array.isArray(list) ? list : [] });
     } catch (e: any) {
-      getState().toast(e?.message || "Could not load chats", "error");
+      if (e?.status !== 401) getState().toast(e?.message || "Could not load chats", "error");
     }
   },
 
   selectSession: async (id) => {
-    if (getState().streaming) return;
-    set({ activeSessionId: id, view: "chat", sidebarOpen: window.innerWidth > 900 ? getState().sidebarOpen : false });
-    if (id) {
-      const r = routeFromSession(getState(), id);
-      if (r) {
-        localStorage.setItem("psd.route", JSON.stringify(r));
-        set({ route: r });
+    if (id && id === getState().activeSessionId) {
+      set({ view: "chat", ...overlays("none") });
+      return;
+    }
+    if (getState().streaming) await getState().stop();
+    set({
+      activeSessionId: id,
+      view: "chat",
+      sidebarOpen: window.innerWidth > 900 ? getState().sidebarOpen : false,
+    });
+    if (!id) return;
+    const sess = getState().sessions.find((s) => s.id === id);
+    if (sess?.model && sess.endpoint_url) {
+      const next: ModelRoute = {
+        model: sess.model,
+        endpoint_id: sess.endpoint_id || "",
+        endpoint_url: sess.endpoint_url,
+      };
+      const cur = getState().route;
+      if (!cur || cur.model !== next.model || !urlsMatch(cur.endpoint_url, next.endpoint_url)) {
+        getState().setRoute(next);
       }
     }
-    if (!id || getState().messages[id]) return;
+    if (getState().messages[id]) {
+      getState().refreshContext();
+      return;
+    }
     set({ loadingHistory: true });
     try {
       const h = await historyApi.get(id);
@@ -254,6 +407,7 @@ export const useApp = create<AppState>((set, getState) => ({
         });
       }
       set((s) => ({ messages: { ...s.messages, [id]: msgs } }));
+      getState().refreshContext();
     } catch (e: any) {
       getState().toast(e?.message || "Could not load history", "error");
     } finally {
@@ -262,24 +416,92 @@ export const useApp = create<AppState>((set, getState) => ({
   },
 
   newChat: () => {
-    if (getState().streaming) return;
-    set({
-      activeSessionId: null,
-      view: "chat",
-      sidebarOpen: window.innerWidth > 900 ? getState().sidebarOpen : false,
-    });
+    if (getState().streaming) getState().stop();
+    set({ activeSessionId: null, view: "chat", sidebarOpen: window.innerWidth > 900 ? getState().sidebarOpen : false });
   },
 
   deleteSession: async (id) => {
+    const sess = getState().sessions.find((s) => s.id === id);
+    if (sess?.is_important) {
+      getState().toast("Unstar this chat before deleting it", "error");
+      return;
+    }
     try {
       await sessionsApi.remove(id);
       set((s) => {
         const messages = { ...s.messages };
         delete messages[id];
-        return { sessions: s.sessions.filter((x) => x.id !== id), messages, activeSessionId: s.activeSessionId === id ? null : s.activeSessionId };
+        return {
+          sessions: s.sessions.filter((x) => x.id !== id),
+          messages,
+          activeSessionId: s.activeSessionId === id ? null : s.activeSessionId,
+        };
       });
     } catch (e: any) {
       getState().toast(e?.message || "Delete failed", "error");
+    }
+  },
+
+  bulkDeleteSessions: async (ids) => {
+    const starred = getState().sessions.filter((s) => ids.includes(s.id) && s.is_important);
+    if (starred.length) getState().toast(`${starred.length} starred chat(s) skipped`, "info");
+    const drop = ids.filter((id) => !getState().sessions.find((s) => s.id === id)?.is_important);
+    try {
+      await sessionsApi.bulkDelete(drop);
+      set((s) => {
+        const messages = { ...s.messages };
+        for (const id of drop) delete messages[id];
+        return {
+          sessions: s.sessions.filter((x) => !drop.includes(x.id)),
+          messages,
+          activeSessionId: drop.includes(s.activeSessionId || "") ? null : s.activeSessionId,
+        };
+      });
+    } catch (e: any) {
+      getState().toast(e?.message || "Bulk delete failed", "error");
+      getState().loadSessions();
+    }
+  },
+
+  archiveSession: async (id) => {
+    try {
+      await sessionsApi.archive(id);
+      set((s) => ({
+        sessions: s.sessions.filter((x) => x.id !== id),
+        activeSessionId: s.activeSessionId === id ? null : s.activeSessionId,
+      }));
+    } catch (e: any) {
+      getState().toast(e?.message || "Archive failed", "error");
+    }
+  },
+
+  unarchiveSession: async (id) => {
+    try {
+      await sessionsApi.unarchive(id);
+      await getState().loadSessions();
+      await getState().selectSession(id);
+    } catch (e: any) {
+      getState().toast(e?.message || "Restore failed", "error");
+    }
+  },
+
+  starSession: async (id, on) => {
+    set((s) => ({ sessions: s.sessions.map((x) => (x.id === id ? { ...x, is_important: on } : x)) }));
+    try {
+      await sessionsApi.important(id, on);
+    } catch (e: any) {
+      getState().toast(e?.message || "Could not star chat", "error");
+      getState().loadSessions();
+    }
+  },
+
+  setSessionFolder: async (id, folder) => {
+    set((s) => ({ sessions: s.sessions.map((x) => (x.id === id ? { ...x, folder } : x)) }));
+    try {
+      await sessionsApi.setFolder(id, folder);
+    } catch (e: any) {
+      getState().toast(e?.message || "Couldn't move chat", "error");
+      getState().loadSessions();
     }
   },
 
@@ -295,73 +517,95 @@ export const useApp = create<AppState>((set, getState) => ({
   loadModels: async (refresh = false) => {
     try {
       const [list, def] = await Promise.all([modelsApi.list(refresh), modelsApi.defaultChat().catch(() => null)]);
-      const items = (list?.items || []).filter((i) => (i.model_type || "llm") === "llm");
+      const items = (list?.items || []).filter(chatCapable);
       set({ modelItems: items });
-      const saved = safeJson<ModelRoute>(localStorage.getItem("psd.route"));
-      const valid = (r: ModelRoute | null) =>
-        !!r &&
-        items.some((i) => {
-          const models = [...i.models, ...(i.models_extra || [])];
-          if (!models.includes(r.model)) return false;
-          if (r.endpoint_id && i.endpoint_id && i.endpoint_id === r.endpoint_id) return true;
-          return urlsMatch(i.url, r.endpoint_url);
-        });
-      if (valid(saved)) set({ route: saved });
-      else if (def && def.model && valid({ model: def.model, endpoint_id: def.endpoint_id, endpoint_url: def.endpoint_url }))
-        set({ route: { model: def.model, endpoint_id: def.endpoint_id, endpoint_url: def.endpoint_url } });
-      else {
-        const first = items.find((i) => i.models.length && !i.offline);
-        if (first) set({ route: { model: first.models[0], endpoint_id: first.endpoint_id || "", endpoint_url: first.url, endpoint_name: first.endpoint_name } });
-        else if (!getState().route) set({ route: null });
+      const current = getState().route;
+      if (routeValid(current, items)) {
+        lsSet("psd.route", JSON.stringify(current));
+        return;
       }
+      const saved = safeJson<ModelRoute>(lsGet("psd.route", ""));
+      if (routeValid(saved, items)) {
+        set({ route: saved });
+        return;
+      }
+      if (def?.model) {
+        const next: ModelRoute = { model: def.model, endpoint_id: def.endpoint_id || "", endpoint_url: def.endpoint_url };
+        if (routeValid(next, items) || def.model) {
+          set({ route: next });
+          lsSet("psd.route", JSON.stringify(next));
+          return;
+        }
+      }
+      const first = items.find((i) => i.models.length && !i.offline);
+      if (first) {
+        const next: ModelRoute = {
+          model: first.models[0],
+          endpoint_id: first.endpoint_id || "",
+          endpoint_url: first.url,
+          endpoint_name: first.endpoint_name,
+        };
+        set({ route: next });
+        lsSet("psd.route", JSON.stringify(next));
+      } else if (!getState().route) set({ route: null });
     } catch (e: any) {
       if (e?.status !== 401) getState().toast(e?.message || "Could not load models", "error");
     }
   },
 
   setRoute: (r) => {
-    localStorage.setItem("psd.route", JSON.stringify(r));
+    lsSet("psd.route", JSON.stringify(r));
     set({ route: r });
   },
+
   selectModel: async (r) => {
-    localStorage.setItem("psd.route", JSON.stringify(r));
+    const prev = getState().route;
+    const prevSessions = getState().sessions;
+    getState().setRoute(r);
     const sid = getState().activeSessionId;
-    set((s) => ({
-      route: r,
-      sessions: sid
-        ? s.sessions.map((x) => (x.id === sid ? { ...x, model: r.model, endpoint_url: r.endpoint_url, endpoint_id: r.endpoint_id } : x))
-        : s.sessions,
-    }));
     if (!sid) {
       getState().toast(`Using ${r.model.split("/").pop()}`, "success");
       return;
     }
+    set((s) => ({
+      sessions: s.sessions.map((x) =>
+        x.id === sid ? { ...x, model: r.model, endpoint_url: r.endpoint_url, endpoint_id: r.endpoint_id } : x,
+      ),
+    }));
     try {
-      await sessionsApi.setModel(sid, r.model, r.endpoint_id, r.endpoint_url);
-      getState().toast(`Using ${r.model.split("/").pop()}`, "success");
+      await sessionsApi.setModel(sid, r.model, r.endpoint_id || "", r.endpoint_url);
+      getState().refreshContext();
+      getState().toast(`Switched to ${r.model.split("/").pop()}`, "success");
     } catch (e: any) {
-      getState().toast(e?.message || "Failed to set model", "error");
+      if (prev) lsSet("psd.route", JSON.stringify(prev));
+      set({ route: prev, sessions: prevSessions });
+      getState().toast(e?.message || "Couldn't switch model", "error");
     }
   },
+
   setMode: (m) => {
-    localStorage.setItem("psd.mode", m);
+    lsSet("psd.mode", m);
     set({ mode: m });
   },
-  toggleWeb: () => set((s) => (localStorage.setItem("psd.web", s.web ? "0" : "1"), { web: !s.web })),
-  toggleBash: () => set((s) => (localStorage.setItem("psd.bash", s.bash ? "0" : "1"), { bash: !s.bash })),
-  toggleRag: () => set((s) => (localStorage.setItem("psd.rag", s.rag ? "0" : "1"), { rag: !s.rag })),
-  toggleIncognito: () => set((s) => (localStorage.setItem("psd.incognito", s.incognito ? "0" : "1"), { incognito: !s.incognito })),
-  setView: (v) => set({ view: v, settingsOpen: false, paletteOpen: false, sidebarOpen: v === "chat" ? getState().sidebarOpen : getState().sidebarOpen }),
-  setPalette: (v) => set({ paletteOpen: v }),
-  setShortcuts: (v) => set({ shortcutsOpen: v }),
+  toggleWeb: () => set((s) => (lsSet("psd.web", s.web ? "0" : "1"), { web: !s.web })),
+  toggleBash: () => set((s) => (lsSet("psd.bash", s.bash ? "0" : "1"), { bash: !s.bash })),
+  toggleRag: () => set((s) => (lsSet("psd.rag", s.rag ? "0" : "1"), { rag: !s.rag })),
+  toggleIncognito: () => set((s) => ({ incognito: !s.incognito })),
 
   send: async (text, attachments = [], approval) => {
     const st = getState();
-    if (st.streaming) return;
+    if (st.streaming) {
+      st.toast("Already generating a reply", "info");
+      return;
+    }
+    if (st.compareBusy) {
+      st.toast("A comparison is still running", "info");
+      return;
+    }
     if (!text.trim() && !attachments.length && !approval) return;
     const route = st.route;
     if (!route) {
-      st.toast("No model available yet. Download one from Models, or add an endpoint in Settings.", "error");
+      st.toast("No model available yet. Add a model endpoint in Settings.", "error");
       return;
     }
 
@@ -369,9 +613,20 @@ export const useApp = create<AppState>((set, getState) => ({
     if (!sid) {
       try {
         const base = route.model.split("/").pop() || "chat";
-        const s = await sessionsApi.create({ name: `${base} · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`, model: route.model, endpoint_url: route.endpoint_url, endpoint_id: route.endpoint_id });
+        const name = st.incognito ? "Nobody" : `${base} · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+        const s = await sessionsApi.create({
+          name,
+          model: route.model,
+          endpoint_url: route.endpoint_url,
+          endpoint_id: route.endpoint_id,
+        });
         sid = s.id;
-        set((x) => ({ sessions: [{ ...s, message_count: 0 }, ...x.sessions], activeSessionId: sid, messages: { ...x.messages, [sid!]: [] } }));
+        set((x) => ({
+          sessions: st.incognito ? x.sessions : [{ ...s, message_count: 0, model: route.model, endpoint_url: route.endpoint_url, endpoint_id: route.endpoint_id }, ...x.sessions],
+          activeSessionId: sid,
+          messages: { ...x.messages, [sid!]: [] },
+          view: "chat",
+        }));
       } catch (e: any) {
         st.toast(e?.message || "Could not create chat", "error");
         return;
@@ -381,7 +636,7 @@ export const useApp = create<AppState>((set, getState) => ({
     const userMsg: Message = { id: mid(), role: "user", content: text, attachments, ts: Date.now() };
     const botMsg: Message = { id: mid(), role: "assistant", content: "", tools: [], streaming: true, ts: Date.now(), model: route.model };
     const add = approval ? [botMsg] : [userMsg, botMsg];
-    set((x) => ({ messages: { ...x.messages, [sessionId]: [...(x.messages[sessionId] || []), ...add] }, streaming: true }));
+    set((x) => ({ messages: { ...x.messages, [sessionId]: [...(x.messages[sessionId] || []), ...add] }, streaming: true, view: "chat" }));
 
     const patch = (fn: (m: Message) => void) =>
       set((x) => {
@@ -398,13 +653,24 @@ export const useApp = create<AppState>((set, getState) => ({
     let raw = "";
     let rawThinking = "";
     const handle = sendChat(
-      { sessionId, message: text, mode: st.mode, web: st.web, bash: st.bash, rag: st.rag, incognito: st.incognito, model: route.model, endpointId: route.endpoint_id, endpointUrl: route.endpoint_url, attachments: attachments.map((a) => a.id), toolApproval: approval },
+      {
+        sessionId,
+        message: text,
+        mode: st.mode,
+        web: st.web,
+        bash: st.bash,
+        rag: st.rag,
+        incognito: st.incognito,
+        model: route.model,
+        endpointId: route.endpoint_id,
+        endpointUrl: route.endpoint_url,
+        attachments: attachments.map((a) => a.id),
+        toolApproval: approval,
+      },
       {
         onOpen: (runId) => set({ runId }),
         onEvent: (ev) => {
           if (ev.delta) {
-            // The backend tags reasoning tokens with `thinking: true`; some
-            // models still emit literal <think> tags inline, so handle both.
             if (ev.thinking) rawThinking += ev.delta;
             else raw += ev.delta;
             const { text: t, thinking } = splitThinking(raw);
@@ -481,7 +747,8 @@ export const useApp = create<AppState>((set, getState) => ({
             m.tools = (m.tools || []).map((t) => ({ ...t, running: false }));
           });
           set({ streaming: false, streamHandle: null, runId: "" });
-          getState().loadSessions();
+          if (!getState().incognito) getState().loadSessions();
+          getState().refreshContext();
         },
       },
     );
@@ -490,25 +757,185 @@ export const useApp = create<AppState>((set, getState) => ({
 
   stop: async () => {
     const { activeSessionId, runId, streamHandle } = getState();
-    if (activeSessionId) await misc.stop(activeSessionId, runId).catch(() => {});
     streamHandle?.cancel();
+    if (activeSessionId) await misc.stop(activeSessionId, runId).catch(() => {});
     set((x) => {
       const sid = x.activeSessionId;
       if (!sid) return { streaming: false, streamHandle: null };
-      const list = (x.messages[sid] || []).map((m) => (m.streaming ? { ...m, streaming: false, tools: (m.tools || []).map((t) => ({ ...t, running: false })) } : m));
+      const list = (x.messages[sid] || []).map((m) =>
+        m.streaming ? { ...m, streaming: false, tools: (m.tools || []).map((t) => ({ ...t, running: false })) } : m,
+      );
       return { streaming: false, streamHandle: null, messages: { ...x.messages, [sid]: list } };
     });
   },
 
-  setSidebar: (v) => set({ sidebarOpen: v }),
-  setSettings: (v) => set({ settingsOpen: v }),
-  toggleTheme: () =>
-    set((s) => {
-      const theme = s.theme === "dark" ? "light" : "dark";
-      localStorage.setItem("psd.theme", theme);
-      document.documentElement.dataset.theme = theme;
-      return { theme };
-    }),
+  continueReply: async () => {
+    if (getState().streaming) return;
+    await getState().send("Please continue from where you left off.");
+  },
+
+  regenerate: async () => {
+    if (getState().streaming) await getState().stop();
+    const sid = getState().activeSessionId;
+    if (!sid) return;
+    const list = getState().messages[sid] || [];
+    const lastUser = [...list].reverse().find((m) => m.role === "user");
+    if (!lastUser?.content) {
+      getState().toast("Nothing to regenerate", "info");
+      return;
+    }
+    const withoutTail = list[list.length - 1]?.role === "assistant" ? list.slice(0, -1) : list;
+    const withoutUser = withoutTail.filter((m) => m.id !== lastUser.id);
+    set((s) => ({ messages: { ...s.messages, [sid]: withoutUser } }));
+    await getState().send(lastUser.content, lastUser.attachments);
+  },
+
+  editAndResend: async (msgId, text) => {
+    if (getState().streaming) await getState().stop();
+    const sid = getState().activeSessionId;
+    if (!sid) return;
+    const list = getState().messages[sid] || [];
+    const idx = list.findIndex((m) => m.id === msgId);
+    if (idx < 0) return;
+    const prefix = list.slice(0, idx);
+    const route = getState().route;
+    try {
+      const s = await sessionsApi.create({
+        name: (text || "Edited chat").slice(0, 40),
+        model: route?.model,
+        endpoint_url: route?.endpoint_url,
+        endpoint_id: route?.endpoint_id,
+      });
+      if (prefix.length) {
+        await sessionsApi.inject(
+          s.id,
+          prefix.map((m) => ({ role: m.role, content: m.content })),
+        );
+      }
+      set((x) => ({
+        activeSessionId: s.id,
+        sessions: [{ ...s, model: route?.model || s.model }, ...x.sessions],
+        messages: { ...x.messages, [s.id]: prefix },
+        view: "chat",
+      }));
+      await getState().send(text);
+    } catch (e: any) {
+      getState().toast(e?.message || "Couldn't edit message", "error");
+    }
+  },
+
+  forkChat: async () => {
+    const sid = getState().activeSessionId;
+    const route = getState().route;
+    const msgs = sid ? getState().messages[sid] || [] : [];
+    try {
+      const s = await sessionsApi.create({
+        name: "Fork",
+        model: route?.model,
+        endpoint_url: route?.endpoint_url,
+        endpoint_id: route?.endpoint_id,
+      });
+      if (msgs.length) {
+        await sessionsApi.inject(
+          s.id,
+          msgs.map((m) => ({ role: m.role, content: m.content })),
+        );
+      }
+      set((x) => ({
+        activeSessionId: s.id,
+        sessions: [{ ...s, name: "Fork", model: route?.model || s.model }, ...x.sessions],
+        messages: { ...x.messages, [s.id]: msgs.map((m) => ({ ...m, id: mid(), streaming: false })) },
+        view: "chat",
+      }));
+      getState().toast("Forked into a new chat", "success");
+    } catch (e: any) {
+      getState().toast(e?.message || "Couldn't fork chat", "error");
+    }
+  },
+
+  compactChat: async () => {
+    const sid = getState().activeSessionId;
+    if (!sid) return;
+    if (getState().streaming) {
+      getState().toast("Stop the reply before compacting", "info");
+      return;
+    }
+    try {
+      await sessionsApi.compact(sid);
+      set((s) => {
+        const messages = { ...s.messages };
+        delete messages[sid];
+        return { messages };
+      });
+      await getState().selectSession(sid);
+      getState().toast("Older messages summarized", "success");
+    } catch (e: any) {
+      getState().toast(e?.message || "Couldn't compact this chat", "error");
+    }
+  },
+
+  refreshContext: async () => {
+    const sid = getState().activeSessionId;
+    if (!sid) {
+      set({ contextLimit: null });
+      return;
+    }
+    try {
+      const info = await sessionsApi.contextInfo(sid);
+      set({ contextLimit: info.context_length ?? null });
+    } catch {
+      /* ignore */
+    }
+  },
+
+  setView: (v) => {
+    if (getState().libraryDirty && v !== "library") {
+      if (!window.confirm("Leave the library? Unsaved document changes will be lost.")) return;
+      set({ libraryDirty: false });
+    }
+    lsSet("psd.view", v);
+    set({ view: v, ...overlays("none") });
+  },
+  setSidebar: (v) => {
+    lsSet("psd.sidebar", v ? "1" : "0");
+    set({ sidebarOpen: v });
+  },
+  setSettings: (v, tab) => {
+    if (tab) {
+      lsSet("psd.settingsTab", tab);
+      set({ settingsTab: tab, ...overlays(v ? "settings" : "none") });
+      return;
+    }
+    set(overlays(v ? "settings" : "none"));
+  },
+  setSettingsTab: (tab) => {
+    lsSet("psd.settingsTab", tab);
+    set({ settingsTab: tab });
+  },
+  setPalette: (v) => set(overlays(v ? "palette" : "none")),
+  setShortcuts: (v) => set(overlays(v ? "shortcuts" : "none")),
+  closeOverlays: () => set(overlays("none")),
+  toggleTheme: () => {
+    const next = getState().theme === "dark" || getState().theme === "midnight" || getState().theme === "forest" || getState().theme === "ocean" ? "light" : "dark";
+    getState().setTheme(next);
+  },
+  setTheme: (t) => {
+    applyTheme(t);
+    lsSet("psd.theme", t);
+    set({ theme: t });
+  },
+  setFontScale: (n) => {
+    applyFontScale(n);
+    lsSet("psd.font", String(n));
+    set({ fontScale: n });
+  },
+  setDensity: (d) => {
+    applyDensity(d);
+    lsSet("psd.density", d);
+    set({ density: d });
+  },
+  setCompareBusy: (v) => set({ compareBusy: v }),
+  setLibraryDirty: (v) => set({ libraryDirty: v }),
 }));
 
 function safeJson<T>(s: string | null): T | null {
@@ -539,42 +966,4 @@ export function splitThinking(raw: string): { text: string; thinking?: string } 
       return "";
     });
   return { text: text.replace(/^\s+/, ""), thinking: thinking.trim() || undefined };
-}
-
-function urlsMatch(a?: string, b?: string) {
-  const n = (u?: string) =>
-    (u || "")
-      .trim()
-      .replace(/\/+$/, "")
-      .replace(/\/chat\/completions$/i, "")
-      .replace(/\/v1$/i, "");
-  return !!a && !!b && n(a) === n(b);
-}
-
-function routeFromSession(st: { sessions: Session[]; modelItems: ModelItem[] }, id: string): ModelRoute | null {
-  const s = st.sessions.find((x) => x.id === id);
-  if (!s?.model) return null;
-  const item = st.modelItems.find((i) => {
-    const models = [...i.models, ...(i.models_extra || [])];
-    if (!models.includes(s.model)) return false;
-    if (s.endpoint_id && i.endpoint_id && s.endpoint_id === i.endpoint_id) return true;
-    if (s.endpoint_url && urlsMatch(i.url, s.endpoint_url)) return true;
-    return false;
-  });
-  if (item) {
-    return {
-      model: s.model,
-      endpoint_id: item.endpoint_id || s.endpoint_id || "",
-      endpoint_url: item.url || s.endpoint_url || "",
-      endpoint_name: item.endpoint_name,
-    };
-  }
-  if (s.endpoint_url || s.endpoint_id) {
-    return {
-      model: s.model,
-      endpoint_id: s.endpoint_id || "",
-      endpoint_url: s.endpoint_url || "",
-    };
-  }
-  return null;
 }

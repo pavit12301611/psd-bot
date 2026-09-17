@@ -88,6 +88,8 @@ export default function ModelsHub() {
   const [jobs, setJobs] = useState<CookbookTaskStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [port, setPort] = useState(8080);
+  const [ggufPick, setGgufPick] = useState<{ repo: string; files: string[] } | null>(null);
 
   const loadCatalogs = useCallback(async () => {
     setErr(null);
@@ -98,7 +100,12 @@ export default function ModelsHub() {
         cookbook.ollamaLibrary().catch(() => ({ models: [] })),
         cookbook.cached().catch(() => ({ models: [] })),
       ]);
-      setFit(hw.models || []);
+      let fitModels = hw.models || [];
+      if (!fitModels.length) {
+        const all = await hwfit.models({ limit: 36, fit_only: false }).catch(() => ({ models: [] as HwfitModel[] }));
+        fitModels = all.models || [];
+      }
+      setFit(fitModels);
       setSys(hw.system);
       if (hw.error) setErr(hw.error);
       setHf(latest.models || []);
@@ -185,8 +192,8 @@ export default function ModelsHub() {
       }
       const path = ggufPath(m);
       const cmd = m.is_gguf
-        ? `llama-server -m ${JSON.stringify(path)} --host 127.0.0.1 --port 8080 -c 8192`
-        : `llama-server --host 127.0.0.1 --port 8080 -c 8192`;
+        ? `llama-server -m ${JSON.stringify(path)} --host 127.0.0.1 --port ${port} -c 8192`
+        : `llama-server --host 127.0.0.1 --port ${port} -c 8192`;
       const r = await cookbook.serve({ repo_id: m.repo_id, cmd });
       if (!r.ok) throw new Error(r.error || "Serve failed");
       if (r.session_id) await rememberCookbookTask(r.session_id, shortName(m.repo_id), "serve", { repo_id: m.repo_id, _cmd: cmd });
@@ -243,6 +250,10 @@ export default function ModelsHub() {
               onChange={(e) => setCustom(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && startDownload({ repo_id: custom })}
             />
+            <label className="flex items-center gap-2 text-[12px]" style={{ color: "var(--muted)" }}>
+              Port
+              <input className="input h-10 w-24" type="number" min={1024} max={65535} value={port} onChange={(e) => setPort(Number(e.target.value) || 8080)} />
+            </label>
             <button className="btn btn-primary h-10" disabled={!custom.trim() || !!busy} onClick={() => startDownload({ repo_id: custom })}>
               {busy?.includes(custom.trim()) ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
               Download
@@ -316,7 +327,17 @@ export default function ModelsHub() {
                     hint={m.est_vram_gb ? `~${m.est_vram_gb} GB fp16` : undefined}
                     actionLabel="Download"
                     disabled={!!busy}
-                    onAction={() => startDownload({ repo_id: m.repo_id, backend: "hf", required_gb: m.est_vram_gb })}
+                    onAction={async () => {
+                      try {
+                        const files = await cookbook.hfGgufFiles(m.repo_id);
+                        const list = files.files || files.gguf_files || [];
+                        if (list.length > 1) {
+                          setGgufPick({ repo: m.repo_id, files: list });
+                          return;
+                        }
+                      } catch { /* ignore */ }
+                      startDownload({ repo_id: m.repo_id, backend: "hf", required_gb: m.est_vram_gb });
+                    }}
                   />
                 ))}
             </CatalogGrid>
@@ -367,7 +388,7 @@ export default function ModelsHub() {
                         {m.size || ""} {m.is_ollama ? "· Ollama" : m.is_gguf ? "· GGUF" : ""} {m.status === "downloading" ? "· still writing" : "· ready"}
                       </div>
                     </div>
-                    <button className="btn h-8" disabled={!!busy || m.status === "downloading"} onClick={() => serveCached(m)}>
+                    <button className="btn h-8" disabled={!!busy || m.status === "downloading"} onClick={() => serveCached(m)} title={m.status === "downloading" ? "Still writing to disk" : "Serve"}>
                       {busy === `serve:${m.repo_id}` ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
                       Serve
                     </button>
@@ -404,6 +425,24 @@ export default function ModelsHub() {
                             {j.type} · {j.progress || j.phase || j.status}
                           </div>
                         </div>
+                        {running && (
+                          <button
+                            className="btn h-7 text-[11px]"
+                            onClick={async () => {
+                              try {
+                                const state = await cookbook.state();
+                                const tasks = (state.tasks || []).filter((t: any) => t.sessionId !== j.session_id && t.id !== j.session_id);
+                                await cookbook.saveState({ ...state, tasks, removedTasks: [...(state.removedTasks || []), j.session_id] });
+                                toast("Dismissed from the list. The download may still finish on disk.", "info");
+                                loadJobs();
+                              } catch (e: any) {
+                                toast(e.message || "Couldn't dismiss", "error");
+                              }
+                            }}
+                          >
+                            Dismiss
+                          </button>
+                        )}
                       </div>
                       {pct != null && (
                         <div className="mt-2 h-1.5 overflow-hidden rounded-full" style={{ background: "var(--bg-sunken)" }}>
@@ -423,6 +462,28 @@ export default function ModelsHub() {
           )}
         </div>
       </div>
+      {ggufPick && (
+        <div className="fixed inset-0 z-[85] flex items-center justify-center p-6" style={{ background: "rgba(0,0,0,.45)" }} onMouseDown={(e) => e.target === e.currentTarget && setGgufPick(null)}>
+          <div className="glass max-h-[70vh] w-full max-w-md overflow-auto rounded-2xl p-4">
+            <h3 className="mb-2 font-semibold">Pick a GGUF file</h3>
+            <div className="flex flex-col gap-1">
+              {ggufPick.files.map((f) => (
+                <button
+                  key={f}
+                  className="btn justify-start text-left"
+                  onClick={() => {
+                    startDownload({ repo_id: ggufPick.repo, backend: "hf", include: f });
+                    setGgufPick(null);
+                  }}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+            <button className="btn mt-3" onClick={() => setGgufPick(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

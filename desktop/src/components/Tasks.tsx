@@ -138,7 +138,7 @@ export default function Tasks() {
                   <button className="icon-btn" title="Stop" onClick={() => act(t.id, () => api.stop(t.id))}>
                     <Square size={13} />
                   </button>
-                  <button className="icon-btn hover:!text-red-400" title="Delete" onClick={() => act(t.id, () => api.remove(t.id), "Deleted")}>
+                  <button className="icon-btn hover:!text-red-400" title="Delete" onClick={() => { if (window.confirm(`Delete task “${t.name}”?`)) act(t.id, () => api.remove(t.id), "Deleted"); }}>
                     <Trash2 size={14} />
                   </button>
                 </div>

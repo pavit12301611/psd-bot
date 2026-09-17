@@ -63,8 +63,22 @@ function errorMessage(res: ApiResponse): string {
   return res.text?.slice(0, 200) || `Request failed (${res.status})`;
 }
 
+let unauthorizedHandler: (() => void) | null = null;
+export function onUnauthorized(fn: () => void) {
+  unauthorizedHandler = fn;
+}
+
+const REQUEST_TIMEOUT_MS = 60_000;
+
 async function browserFallback(req: ApiRequest): Promise<ApiResponse> {
-  const init: RequestInit = { method: req.method, headers: { ...(req.headers || {}) }, credentials: "same-origin" };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  const init: RequestInit = {
+    method: req.method,
+    headers: { ...(req.headers || {}) },
+    credentials: "same-origin",
+    signal: ctrl.signal,
+  };
   if (req.files || req.form) {
     const fd = new FormData();
     for (const [k, v] of Object.entries(req.form || {})) fd.append(k, v);
@@ -79,24 +93,32 @@ async function browserFallback(req: ApiRequest): Promise<ApiResponse> {
     (init.headers as any)["Content-Type"] = "application/json";
     init.body = JSON.stringify(req.json);
   }
-  const r = await fetch(req.path, init);
-  const headers: Record<string, string> = {};
-  r.headers.forEach((v, k) => (headers[k] = v));
-  const ctype = headers["content-type"] || "";
-  if (ctype.startsWith("text/") || ctype.includes("json") || ctype === "") {
-    const text = await r.text();
-    let json: any = null;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      /* not json */
+  try {
+    const r = await fetch(req.path, init);
+    const headers: Record<string, string> = {};
+    r.headers.forEach((v, k) => (headers[k] = v));
+    const ctype = headers["content-type"] || "";
+    if (ctype.startsWith("text/") || ctype.includes("json") || ctype === "") {
+      const text = await r.text();
+      let json: any = null;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        /* not json */
+      }
+      return { status: r.status, headers, json, text };
     }
-    return { status: r.status, headers, json, text };
+    const buf = new Uint8Array(await r.arrayBuffer());
+    let s = "";
+    const CHUNK = 0x8000;
+    for (let i = 0; i < buf.length; i += CHUNK) s += String.fromCharCode(...buf.subarray(i, i + CHUNK));
+    return { status: r.status, headers, json: null, text: "", base64: btoa(s) };
+  } catch (e: any) {
+    if (e?.name === "AbortError") return { status: 0, headers: {}, json: { error: "Request timed out" }, text: "Request timed out" };
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
-  const buf = new Uint8Array(await r.arrayBuffer());
-  let s = "";
-  buf.forEach((b) => (s += String.fromCharCode(b)));
-  return { status: r.status, headers, json: null, text: "", base64: btoa(s) };
 }
 
 /** Low level request. Never throws on HTTP status – check `status`. */
@@ -108,7 +130,11 @@ export async function request<T = any>(req: ApiRequest): Promise<ApiResponse<T>>
 /** Convenience: throws ApiError on >= 400 and returns parsed JSON. */
 export async function api<T = any>(req: ApiRequest): Promise<T> {
   const res = await request<T>(req);
+  if (res.status === 401) {
+    unauthorizedHandler?.();
+  }
   if (res.status >= 400) throw new ApiError(res.status, errorMessage(res), res.json);
+  if (res.status === 0) throw new ApiError(0, errorMessage(res) || "Network error", res.json);
   return (res.json ?? (res.text as unknown)) as T;
 }
 
@@ -179,6 +205,7 @@ export function stream(req: ApiRequest, h: StreamHandlers): StreamHandle {
       cancel: () => {
         cancelled = true;
         unlisten?.();
+        invoke("api_stream_cancel", { id }).catch(() => {});
       },
     };
   }

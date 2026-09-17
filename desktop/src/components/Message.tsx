@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import { Brain, ChevronDown, Copy, Check, Terminal, Globe, Paperclip, AlertTriangle, Clock, Volume2 } from "lucide-react";
+import { Brain, ChevronDown, Copy, Check, Terminal, Globe, Paperclip, AlertTriangle, Clock, Volume2, Pencil, RotateCw } from "lucide-react";
 import type { Message as Msg, ToolCall } from "../store/app";
 import { useApp } from "../store/app";
 import { inTauri, request } from "../lib/ipc";
@@ -177,6 +177,10 @@ function AskUser({ msg }: { msg: Msg }) {
 
 function MessageView({ msg, isLast }: { msg: Msg; isLast: boolean }) {
   const isUser = msg.role === "user";
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(msg.content);
+  const editAndResend = useApp((s) => s.editAndResend);
+  const regenerate = useApp((s) => s.regenerate);
   const openLink = async (href: string) => {
     if (inTauri) {
       const { openUrl } = await import("@tauri-apps/plugin-opener");
@@ -197,11 +201,24 @@ function MessageView({ msg, isLast }: { msg: Msg; isLast: boolean }) {
               ))}
             </div>
           )}
-          <div className="selectable whitespace-pre-wrap rounded-3xl rounded-br-lg px-4 py-2.5 text-[14.5px] leading-relaxed" style={{ background: "var(--user-bubble)", color: "var(--user-text)" }}>
-            {msg.content}
-          </div>
-          <div className="mt-1 flex justify-end opacity-0 transition-opacity group-hover:opacity-100">
+          {editing ? (
+            <div className="flex flex-col gap-1.5">
+              <textarea className="input min-h-[72px]" value={draft} onChange={(e) => setDraft(e.target.value)} />
+              <div className="flex justify-end gap-1">
+                <button className="btn h-7 text-xs" onClick={() => setEditing(false)}>Cancel</button>
+                <button className="btn btn-primary h-7 text-xs" onClick={() => { editAndResend(msg.id, draft); setEditing(false); }}>Save & resend</button>
+              </div>
+            </div>
+          ) : (
+            <div className="selectable whitespace-pre-wrap rounded-3xl rounded-br-lg px-4 py-2.5 text-[14.5px] leading-relaxed" style={{ background: "var(--user-bubble)", color: "var(--user-text)" }}>
+              {msg.content}
+            </div>
+          )}
+          <div className="mt-1 flex justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
             <CopyBtn text={msg.content} />
+            <button className="icon-btn h-7 w-7" title="Edit and resend" onClick={() => { setDraft(msg.content); setEditing(true); }}>
+              <Pencil size={13} />
+            </button>
           </div>
         </div>
       </motion.div>
@@ -244,7 +261,7 @@ function MessageView({ msg, isLast }: { msg: Msg; isLast: boolean }) {
           <div className={`md text-[14.5px] leading-relaxed ${msg.streaming ? "caret" : ""}`}>
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
-              rehypePlugins={[rehypeHighlight]}
+              rehypePlugins={msg.streaming ? [] : [rehypeHighlight]}
               components={{
                 a: ({ href, children }) => (
                   <a
@@ -303,6 +320,11 @@ function MessageView({ msg, isLast }: { msg: Msg; isLast: boolean }) {
           <div className={`mt-1 flex items-center gap-1 transition-opacity ${isLast ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}>
             <CopyBtn text={msg.content} />
             <SpeakBtn text={msg.content} />
+            {isLast && (
+              <button className="icon-btn h-7 w-7" title="Regenerate" onClick={() => regenerate()}>
+                <RotateCw size={13} />
+              </button>
+            )}
             {msg.metrics?.tokens_per_second && (
               <span className="text-[11px]" style={{ color: "var(--muted)" }}>
                 {Number(msg.metrics.tokens_per_second).toFixed(1)} tok/s
