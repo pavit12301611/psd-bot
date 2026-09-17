@@ -94,9 +94,19 @@ _register(
     result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
 )
 _register(
-    {"get_workspace", "glob", "grep", "ls", "read_file"},
+    {"get_workspace", "glob", "grep", "ls", "read_file",
+     # Coding helpers that read workspace files: code_stats echoes derived
+     # file content (symbols/imports) and regex_test echoes matched text.
+     "code_stats", "regex_test"},
     ToolEffect.READ_WORKSPACE,
     result_integrity=ResultIntegrity.WORKSPACE_UNTRUSTED,
+)
+_register(
+    {"todoread"},
+    ToolEffect.READ_PRIVATE,
+    # Session-local agent-authored state (written by todowrite), not external
+    # or workspace content.
+    result_integrity=ResultIntegrity.SYSTEM,
 )
 _register(
     {"web_search"},

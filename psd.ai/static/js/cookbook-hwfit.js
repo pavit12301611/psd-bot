@@ -471,6 +471,7 @@ function _scanSig() {
     u: document.getElementById('hwfit-usecase')?.value || '',
     s: document.getElementById('hwfit-search')?.value?.trim() || '',
     q: document.getElementById('hwfit-quant')?.value || '',
+    a: document.getElementById('hwfit-access')?.value || '',
     c: _ctxValue(),
     g: (tc && typeof tc._activeCount === 'number') ? String(tc._activeCount) : '',
     gg: (tc && tc._activeGroup) ? String(tc._activeGroup) : '',
@@ -788,6 +789,7 @@ export async function _hwfitFetch(fresh = false, opts = {}) {
   try {
     const sortBy = document.getElementById('hwfit-sort')?.value || 'newest';
     const quantPref = document.getElementById('hwfit-quant')?.value || '';
+    const accessPref = document.getElementById('hwfit-access')?.value || '';
     const targetCtx = _ctxValue();
     // Get active GPU count from toggles
     const toggleContainer = document.getElementById('hwfit-gpu-toggles');
@@ -830,6 +832,7 @@ export async function _hwfitFetch(fresh = false, opts = {}) {
     if (!isImageMode) {
       if (useCase) params.set('use_case', useCase);
       if (quantPref) params.set('quant', quantPref);
+      if (accessPref) params.set('access', accessPref);
       if (targetCtx) params.set('ctx', String(targetCtx));
       // Fit-only filter — set by the dot in the Fit column header.
       const _fitOnly = (() => { try { return localStorage.getItem('hwfit_fit_only_v1') === '1'; } catch { return false; } })();
@@ -1339,9 +1342,10 @@ export function _hwfitRenderList(el, models) {
     const hasFilters = !!(document.getElementById('hwfit-search')?.value?.trim()
       || document.getElementById('hwfit-usecase')?.value
       || document.getElementById('hwfit-quant')?.value
+      || document.getElementById('hwfit-access')?.value
       || document.getElementById('hwfit-engine')?.value);
     let msg;
-    if (hasFilters) msg = 'No models match these filters — try clearing the search, use-case, quant, or engine.';
+    if (hasFilters) msg = 'No models match these filters — try clearing the search, use-case, quant, license, or engine.';
     else if (hasHw) msg = 'No models fit — the hardware probe may have under-reported. Try Rescan.';
     else msg = 'No models fit your hardware';
     el.innerHTML = `<div class="hwfit-loading">${msg}</div>`;
@@ -1399,6 +1403,14 @@ export function _hwfitRenderList(el, models) {
     const modeLabel = _modeLabel(m);
     const vramLabel = m.required_gb ? m.required_gb.toFixed(1) + 'G' : '?';
     const moeBadge = m.is_moe ? '<span class="hwfit-badge hwfit-moe">MoE</span>' : '';
+    // License badge — OSS = permissive open license, LIC = gated/conditional.
+    // Unknown metadata renders nothing (never guess a license).
+    let accessBadge = '';
+    if (m.access === 'unrestricted') {
+      accessBadge = `<span class="hwfit-badge hwfit-access-open" title="Open license${m.license ? ` (${esc(m.license)})` : ''} — free to run offline, no conditions">OSS</span>`;
+    } else if (m.access === 'restricted') {
+      accessBadge = `<span class="hwfit-badge hwfit-access-restricted" title="Restricted license${m.license ? ` (${esc(m.license)})` : ''} — gated or conditional; check terms before shipping">LIC</span>`;
+    }
     const imgBadge = m.is_image_gen ? '<span class="hwfit-badge" style="background:color-mix(in srgb, var(--red) 20%, transparent);color:var(--red);font-size:8px;padding:1px 4px;border-radius:3px;margin-left:4px;">IMG</span>' : '';
     const dlDot = (_cachedModelIds && (_cachedModelIds.has(m.name) || [..._cachedModelIds].some(id => id === m.name?.split('/').pop()))) ? '<span class="hwfit-dl-dot" title="Downloaded">\u25CF</span>' : '';
     html += `<div class="hwfit-row" data-model="${esc(m.name)}">`;
@@ -1421,7 +1433,7 @@ export function _hwfitRenderList(el, models) {
         _quantSuffix = ` <span class="hwfit-name-quant" title="${esc(_quantTag)} — full storage format">(${esc(_display)})</span>`;
       }
     }
-    html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(_short)}${_quantSuffix}${moeBadge}${imgBadge}${dlDot}</span>`;
+    html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(_short)}${_quantSuffix}${moeBadge}${accessBadge}${imgBadge}${dlDot}</span>`;
     html += `<span class="hwfit-col hwfit-c-vram" title="Estimated loaded footprint for this quant/backend/context, including model weights and KV/runtime allowance.">${vramLabel}</span>`;
     html += `<span class="hwfit-col hwfit-c-params" title="Original total model parameters, not quantized storage size.">${esc(pcount)}</span>`;
     // Truncate the Quant cell to 9 chars + ellipsis so long tags like
@@ -1632,6 +1644,13 @@ export function _expandModelRow(row, modelData) {
   html += `<span class="hwfit-panel-model">${esc(modelData.name)}${dlSource.kind ? ` <span style="opacity:0.5;font-size:10px;">(${esc(dlSource.kind)} ${esc(modelData.quant || '')})</span>` : (modelData.quant_repo ? ` <span style="opacity:0.5;font-size:10px;">(${esc(modelData.quant)})</span>` : '')}</span>`;
   html += `<span class="hwfit-panel-badge">${esc(label)}</span>`;
   html += `<a href="${esc(hfUrl)}" target="_blank" rel="noopener" class="hwfit-panel-hf-link" title="View download source on HuggingFace">HF \u2197</a>`;
+  // License line — same classification as the row badge, spelled out here
+  // so the terms are obvious before the user hits Download/Run.
+  if (modelData.access === 'unrestricted') {
+    html += `<span class="hwfit-badge hwfit-access-open" style="margin-left:6px;" title="Permissive license — run offline, ship, modify, no conditions.">Open license${modelData.license ? ' \u00B7 ' + esc(modelData.license) : ''}</span>`;
+  } else if (modelData.access === 'restricted') {
+    html += `<span class="hwfit-badge hwfit-access-restricted" style="margin-left:6px;" title="Gated or conditional license — fine for local use, but check the terms before shipping.">Restricted license${modelData.license ? ' \u00B7 ' + esc(modelData.license) : ''}</span>`;
+  }
   html += `</div>`;
   html += `<div class="hwfit-panel-actions">`;
   html += `<button class="cookbook-btn hwfit-dl-btn">Download</button>`;
@@ -2014,7 +2033,10 @@ function _hwfitEngineGlyph(value) {
 
 const _HWFIT_USECASE_GLYPHS = {
   general: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>',
+  coding: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>',
   multimodal: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>',
+  reasoning: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2z"></path></svg>',
+  chat: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"></path></svg>',
   image_gen: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><path d="M21 15l-5-5L5 21"></path></svg>',
 };
 
@@ -2168,10 +2190,34 @@ export function _hwfitInit() {
   const search = document.getElementById('hwfit-search');
   const remote = document.getElementById('hwfit-host');
   _syncCtxControl();
+  // Restore persisted filter picks (use-case / quant / license) so the list
+  // the user curated survives a reload. Values are validated against the
+  // current options — a stale saved value can never select a phantom option.
+  try {
+    const saved = JSON.parse(localStorage.getItem('hwfit_filters_v1') || '{}');
+    const _restore = (sel, val) => {
+      if (sel && val && Array.from(sel.options).some((o) => o.value === val)) sel.value = val;
+    };
+    _restore(uc, saved.u);
+    _restore(qpref, saved.q);
+    _restore(document.getElementById('hwfit-access'), saved.a);
+  } catch {}
   if (uc) _bindHwfitUsecasePicker(uc);
-  if (uc) uc.addEventListener('change', () => _hwfitFetch());
+  // Persist the scan filters on every change (fit-only has its own key).
+  const _saveScanFilters = () => {
+    try {
+      localStorage.setItem('hwfit_filters_v1', JSON.stringify({
+        u: document.getElementById('hwfit-usecase')?.value || '',
+        q: document.getElementById('hwfit-quant')?.value || '',
+        a: document.getElementById('hwfit-access')?.value || '',
+      }));
+    } catch {}
+  };
+  if (uc) uc.addEventListener('change', () => { _saveScanFilters(); _hwfitFetch(); });
   if (sort) sort.addEventListener('change', () => _hwfitFetch());
-  if (qpref) qpref.addEventListener('change', () => _hwfitFetch());
+  if (qpref) qpref.addEventListener('change', () => { _saveScanFilters(); _hwfitFetch(); });
+  const apref = document.getElementById('hwfit-access');
+  if (apref) apref.addEventListener('change', () => { _saveScanFilters(); _hwfitFetch(); });
   // Engine filter is a pure client-side view filter over the already-fetched
   // list (HF + Ollama merged), so just re-render from cache.
   const engine = document.getElementById('hwfit-engine');

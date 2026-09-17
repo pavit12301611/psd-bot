@@ -80,6 +80,9 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "edit_file": "Edit an existing file ON DISK by exact string replacement (fix a bug, change a function). Shows a diff. The tool for changing files on disk — NOT edit_document (editor panel) and NOT bash sed/heredoc.",
     "apply_patch": "Apply a multi-file patch to source files ON DISK. Use for implementation, refactors, and bug fixes where several edits belong together. Workspace-confined and returns a diff. Prefer over bash redirects/heredocs/sed.",
     "todowrite": "Maintain a structured task list for the current coding session. Use for multi-step code work: inspect, edit, test, and mark statuses current.",
+    "todoread": "Read back the current session's task list (maintained with todowrite) without changing it. Use to re-check what is done/in progress after many tool rounds or context compaction.",
+    "code_stats": "Advisory statistics for a source file in the workspace: total/code/blank/comment line counts, detected language, function/class counts, imports. Use to size up a file before reading or editing it — cheaper first look than read_file.",
+    "regex_test": "Test a regular expression against inline text or a workspace file. Returns matches with line/column, character spans, and captured groups. Use to develop, verify, or debug a regex pattern (extraction, validation, search-and-replace planning) without using the shell.",
     "create_document": "Create a new document in the editor panel. For code, articles, text content longer than 15 lines, unless an already-open document/email draft is the obvious target. If an email compose draft is open, edit that draft instead of creating another document.",
     "edit_document": "Preferred tool for editing an existing document — targeted find-and-replace. Use for any small change: add a function, fix a bug, tweak a section, rename things.",
     "update_document": "Replace the entire active document content. ONLY for full rewrites (>50% changed). Do not use for small edits — use edit_document instead.",
@@ -513,6 +516,17 @@ class ToolIndex:
         frozenset({"write a", "create a doc", "draft", "compose", "poem", "story",
                    "essay", "outline", "letter"}):
             {"create_document", "edit_document", "update_document"},
+        # Coding-helper intents — regex development, file sizing, and the
+        # session task list the agent maintains with todowrite.
+        frozenset({"regex", "regular expression", "regexp", "test this pattern",
+                   "match this pattern", "does it match"}):
+            {"regex_test"},
+        frozenset({"line count", "count lines", "how many lines", "code stats",
+                   "code statistics", "loc", "size of the file"}):
+            {"code_stats", "read_file"},
+        frozenset({"todo list", "task list", "my todos", "what is left",
+                   "whats left", "checklist progress"}):
+            {"todoread", "todowrite"},
     }
 
     def get_tools_for_query(

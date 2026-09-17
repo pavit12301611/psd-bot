@@ -239,6 +239,68 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "todoread",
+            "description": "Read the current session's structured task list (the one maintained with todowrite) without changing it. Use after context was compacted or after many tool rounds to re-check what is done and what is in progress before continuing.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "code_stats",
+            "description": "Get advisory statistics for a source file in the workspace: total/code/blank/comment line counts, detected language, function and class counts, and imports. Use to size up a file before reading or editing it — cheaper than read_file for a first look.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path (absolute or relative to the workspace)"
+                    }
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "regex_test",
+            "description": "Test a regular expression against inline text or a workspace file and see exactly what it matches. Returns matches with line/column, character spans, and captured groups. Use to develop or debug a pattern (extraction, validation, find-and-replace planning) without burning shell rounds.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regular expression (Python re syntax)"
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Text to match against (provide text OR path, not both)"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Workspace file to match against (provide text OR path, not both)"
+                    },
+                    "flags": {
+                        "type": "string",
+                        "description": "Optional combination of i (ignore case), m (multiline), s (dotall), x (verbose)"
+                    },
+                    "max_matches": {
+                        "type": "integer",
+                        "description": "Maximum matches to report (default 20, capped at 100)"
+                    }
+                },
+                "required": ["pattern"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "create_document",
             "description": "Create a new document in the editor panel. Use this when the user asks to write, create, build, make, or generate code, scripts, programs, games, apps, or any long-form or structured content that is more than a short paragraph, AND there is no already-open document/email draft that the request refers to. If an email compose draft is open, edit that draft instead of creating another document. NEVER put large generated content directly in chat — use this tool instead.",
             "parameters": {
@@ -1449,6 +1511,8 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         content = args.get("patch_text") or args.get("patchText") or args.get("patch") or ""
     elif tool_type == "todowrite":
         content = json.dumps(args)
+    elif tool_type in ("todoread", "code_stats", "regex_test"):
+        content = json.dumps(args) if args else ""
     elif tool_type == "create_document":
         parts = [args.get("title", "Untitled")]
         if args.get("language"):

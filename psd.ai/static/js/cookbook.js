@@ -3099,7 +3099,10 @@ function _renderRecipes() {
   html += '<span class="hwfit-usecase-wrap">';
   html += '<select class="cookbook-field-input hwfit-usecase" id="hwfit-usecase" style="display:none;height:28px;">';
   html += '<option value="general" selected>Standard</option>';
+  html += '<option value="coding">Coding</option>';
   html += '<option value="multimodal">Vision</option>';
+  html += '<option value="reasoning">Reasoning</option>';
+  html += '<option value="chat">Chat</option>';
   html += '<option value="image_gen">Image</option></select>';
   html += '<button type="button" class="cookbook-field-input hwfit-usecase-btn" data-hwfit-usecase-btn aria-haspopup="listbox" aria-expanded="false" title="Model type">';
   html += '<span class="hwfit-usecase-btn-icon" data-hwfit-usecase-icon aria-hidden="true"></span>';
@@ -3149,6 +3152,15 @@ function _renderRecipes() {
   html += '<option value="Q3_K_M">Q3</option><option value="Q2_K">Q2</option>';
   html += '<option value="AWQ-4bit">AWQ</option><option value="FP8">FP8</option><option value="FP4">FP4</option><option value="NVFP4">NVFP4</option></select>';
   html += '<span class="hwfit-help-chip hwfit-help-chip-inline hwfit-quant-help" title="Lower quant tiers (Q2/Q3/Q4 / AWQ-4bit) are smaller, faster, and cheaper to run, at some quality loss. Higher tiers (Q8 / FP8 / FP16 / BF16) preserve more quality but need more VRAM. “All” shows the best-scoring quant per model — pick a specific one to filter.">?</span>';
+  html += '</span>';
+  // License/access filter — separates permissively-licensed models you can
+  // run and ship without conditions from gated/custom-license ones.
+  html += '<span class="hwfit-access-wrap">';
+  html += '<select class="cookbook-field-input hwfit-access" id="hwfit-access" style="height:28px;">';
+  html += '<option value="" selected>License</option>';
+  html += '<option value="unrestricted">Open</option>';
+  html += '<option value="restricted">Restricted</option></select>';
+  html += '<span class="hwfit-help-chip hwfit-help-chip-inline hwfit-access-help" title="Filter by license. Open = permissive licenses (Apache-2.0, MIT…) — run offline, ship, modify, no strings. Restricted = gated or conditional licenses (Llama Community, Gemma terms, MNPL, OpenRAIL…) — fine locally, but read the terms first. Models without known license metadata are hidden when a filter is active.">?</span>';
   html += '</span>';
   // Ctx slider — lets you target a context length for fit estimates; the
   // hwfit ranking uses _ctxValue() to factor that into VRAM math, so
