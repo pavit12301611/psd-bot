@@ -11,8 +11,8 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
-    allowedHosts: process.env.PSD_AI_DEV_BACKEND ? true : undefined,
+    host: host || "0.0.0.0",
+    allowedHosts: true,
     hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,
     watch: { ignored: ["**/src-tauri/**"] },
     // Browser-only UI development (no Tauri shell): forward API calls to a
