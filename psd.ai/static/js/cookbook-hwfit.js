@@ -2190,12 +2190,34 @@ export function _hwfitInit() {
   const search = document.getElementById('hwfit-search');
   const remote = document.getElementById('hwfit-host');
   _syncCtxControl();
+  // Restore persisted filter picks (use-case / quant / license) so the list
+  // the user curated survives a reload. Values are validated against the
+  // current options — a stale saved value can never select a phantom option.
+  try {
+    const saved = JSON.parse(localStorage.getItem('hwfit_filters_v1') || '{}');
+    const _restore = (sel, val) => {
+      if (sel && val && Array.from(sel.options).some((o) => o.value === val)) sel.value = val;
+    };
+    _restore(uc, saved.u);
+    _restore(qpref, saved.q);
+    _restore(document.getElementById('hwfit-access'), saved.a);
+  } catch {}
   if (uc) _bindHwfitUsecasePicker(uc);
-  if (uc) uc.addEventListener('change', () => _hwfitFetch());
+  // Persist the scan filters on every change (fit-only has its own key).
+  const _saveScanFilters = () => {
+    try {
+      localStorage.setItem('hwfit_filters_v1', JSON.stringify({
+        u: document.getElementById('hwfit-usecase')?.value || '',
+        q: document.getElementById('hwfit-quant')?.value || '',
+        a: document.getElementById('hwfit-access')?.value || '',
+      }));
+    } catch {}
+  };
+  if (uc) uc.addEventListener('change', () => { _saveScanFilters(); _hwfitFetch(); });
   if (sort) sort.addEventListener('change', () => _hwfitFetch());
-  if (qpref) qpref.addEventListener('change', () => _hwfitFetch());
+  if (qpref) qpref.addEventListener('change', () => { _saveScanFilters(); _hwfitFetch(); });
   const apref = document.getElementById('hwfit-access');
-  if (apref) apref.addEventListener('change', () => _hwfitFetch());
+  if (apref) apref.addEventListener('change', () => { _saveScanFilters(); _hwfitFetch(); });
   // Engine filter is a pure client-side view filter over the already-fetched
   // list (HF + Ollama merged), so just re-render from cache.
   const engine = document.getElementById('hwfit-engine');
