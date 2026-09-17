@@ -54,7 +54,7 @@ DEFAULT_PORT = int(os.getenv("PSD_LLAMA_PORT", "8080") or "8080")
 
 
 def _default_runtime_dir() -> Path:
-    """Device-level home for llama.cpp + model weights.
+    r"""Device-level home for llama.cpp + model weights.
 
     Lives OUTSIDE the project folder so re-downloading / re-extracting the
     code never throws away multi-GB models:

@@ -92,9 +92,26 @@ REM  2. Create the virtual environment (first run only)
 REM ----------------------------------------------------------------
 set "VENVPY=%APP_DIR%\venv\Scripts\python.exe"
 
-REM Sanity check: a venv whose numpy cannot even be imported (hangs / crashes)
-REM is useless - detect it (20s budget) and rebuild.
-if exist "%VENVPY%" if exist "venv\.deps_ok" call :check_venv
+REM numpy's OpenBLAS DLL can deadlock on import on some Windows PCs (AV /
+REM loader-lock). Force a single BLAS thread everywhere - this is the known
+REM fix and costs nothing for psd.ai's workloads.
+set "OPENBLAS_NUM_THREADS=1"
+set "OMP_NUM_THREADS=1"
+set "MKL_NUM_THREADS=1"
+set "OPENBLAS_MAIN_FREE=1"
+
+REM Sanity check an existing venv: numpy must import within 20s or the venv
+REM is rebuilt from scratch.
+if exist "%VENVPY%" if exist "venv\.deps_ok" (
+    echo  ==^> Checking the virtual environment...
+    call :verify_numpy
+    if errorlevel 1 (
+        echo      numpy in the existing venv hangs or fails - rebuilding the venv.
+        rmdir /s /q venv
+    ) else (
+        echo       venv OK
+    )
+)
 
 if not exist "%VENVPY%" (
     echo  ==^> Creating virtual environment ^(venv^)...
@@ -131,6 +148,29 @@ if not exist "venv\.deps_ok" (
     echo       ^(Delete the venv folder to force a reinstall.^)
 )
 
+REM Verify numpy actually imports in THIS venv (20s budget). If the default
+REM build deadlocks on this PC, fall back to the numpy 1.26 line, which ships
+REM a different OpenBLAS build.
+echo  ==^> Verifying numpy...
+call :verify_numpy
+if errorlevel 1 (
+    echo      numpy 2.x hangs on import on this PC - switching to numpy 1.26 ...
+    "%VENVPY%" -m pip install --quiet "numpy<2" --force-reinstall
+    call :verify_numpy
+    if errorlevel 1 (
+        echo.
+        echo  [ERROR] numpy cannot be imported on this PC ^(import hangs^).
+        echo          This is usually antivirus / endpoint-protection interfering with
+        echo          the OpenBLAS DLL. Try: add the folder
+        echo            %APP_DIR%\venv
+        echo          to your antivirus exclusions, then double-click run.bat again.
+        echo.
+        pause
+        exit /b 1
+    )
+)
+echo       numpy OK
+
 REM ----------------------------------------------------------------
 REM  4. First-time setup (creates data folders, database and .env).
 REM     The admin account is created inside the desktop app's own
@@ -163,7 +203,7 @@ if not defined PSD_NO_LOCAL_MODEL (
     echo      First run downloads llama.cpp + 3-5 fit model weights ^(a few GB each^).
     echo      Keep that window open while you use psd.ai - closing it stops the model group.
     if not defined PSD_AI_RUNTIME_DIR set "PSD_AI_RUNTIME_DIR=%LOCALAPPDATA%\psd.ai\runtime"
-    echo      Models are stored on this PC at %PSD_AI_RUNTIME_DIR%
+    echo      Models are stored on this PC at !PSD_AI_RUNTIME_DIR!
     echo      ^(outside the project folder, so re-downloading the code never re-downloads models^).
     if exist "%PSD_AI_RUNTIME_DIR%\local_model_failed.txt" del /q "%PSD_AI_RUNTIME_DIR%\local_model_failed.txt"
     start "psd.ai - local model group" cmd /k ""%VENVPY%" scripts\local_llama.py --port %LLAMA_PORT% --foreground"
@@ -288,24 +328,19 @@ endlocal
 exit /b 0
 
 REM ---------------- subroutines ----------------
-:check_venv
-echo  ==^> Checking the virtual environment...
+:verify_numpy
+REM returns errorlevel 0 if "import numpy" finishes within 20s, 1 otherwise
 if exist "venv\.np_ok" del /q "venv\.np_ok"
-set "OPENBLAS_NUM_THREADS=2"
-set "OMP_NUM_THREADS=2"
 start /b "" cmd /c ""%VENVPY%" -c "import numpy" >nul 2>&1 && echo ok> "venv\.np_ok""
 set /a _w=0
-:check_venv_wait
-if exist "venv\.np_ok" goto :check_venv_ok
-if %_w% geq 20 goto :check_venv_bad
+:verify_numpy_wait
+if exist "venv\.np_ok" goto :verify_numpy_ok
+if %_w% geq 20 goto :verify_numpy_bad
 timeout /t 1 /nobreak >nul
 set /a _w+=1
-goto :check_venv_wait
-:check_venv_bad
-echo      numpy in the existing venv hangs or fails on this Python - rebuilding the venv.
-rmdir /s /q venv
-exit /b 0
-:check_venv_ok
+goto :verify_numpy_wait
+:verify_numpy_bad
+exit /b 1
+:verify_numpy_ok
 del /q "venv\.np_ok"
-echo       venv OK
 exit /b 0

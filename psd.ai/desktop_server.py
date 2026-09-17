@@ -59,10 +59,12 @@ def main() -> None:
     # logical CPU during DLL load; on hybrid P/E-core CPUs and inside a
     # console-less child process (CREATE_NO_WINDOW) that init has been seen
     # to deadlock forever (stack: numpy/_core/multiarray.py -> create_module).
-    # A small fixed pool sidesteps it and costs nothing for our workloads.
+    # With ANY worker thread (even 1) OpenBLAS waits on it inside DllMain,
+    # which can deadlock under the Windows loader lock (seen on this exact
+    # stack with 2 threads too). 1 = no workers = no wait = no deadlock.
     for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
                  "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
-        os.environ.setdefault(_var, "2")
+        os.environ.setdefault(_var, "1")
     os.environ.setdefault("OPENBLAS_MAIN_FREE", "1")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
