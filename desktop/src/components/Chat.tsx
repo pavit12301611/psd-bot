@@ -1,10 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { ArrowDown, Sparkles, Code2, Lightbulb, PenLine } from "lucide-react";
-import { useApp } from "../store/app";
+import { useApp, type Message } from "../store/app";
 import MessageView from "./Message";
 import Composer from "./Composer";
 import ModelPicker from "./ModelPicker";
+
+// Stable empty list: a zustand selector must return the SAME reference when
+// nothing changed, otherwise useSyncExternalStore re-renders forever
+// ("Maximum update depth exceeded") and React unmounts the whole tree.
+const NO_MESSAGES: Message[] = [];
 
 const SUGGESTIONS = [
   { icon: <Sparkles size={15} />, title: "Explain something", text: "Explain how large language models generate text, in simple terms." },
@@ -15,7 +20,7 @@ const SUGGESTIONS = [
 
 export default function Chat() {
   const sid = useApp((s) => s.activeSessionId);
-  const messages = useApp((s) => (s.activeSessionId ? s.messages[s.activeSessionId] || [] : []));
+  const messages = useApp((s) => (s.activeSessionId ? s.messages[s.activeSessionId] || NO_MESSAGES : NO_MESSAGES));
   const loading = useApp((s) => s.loadingHistory);
   const send = useApp((s) => s.send);
   const session = useApp((s) => s.sessions.find((x) => x.id === s.activeSessionId));
