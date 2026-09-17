@@ -12,6 +12,8 @@ Set EMBEDDING_URL in .env, e.g.:
   EMBEDDING_URL=http://localhost:8000/v1/embeddings    (vllm / llama.cpp)
 """
 
+from __future__ import annotations
+
 import os
 
 from src.constants import FASTEMBED_CACHE_DIR, EMBEDDING_ENDPOINT_FILE
@@ -27,11 +29,18 @@ if os.name == "nt":
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 import logging
-import numpy as np
 import httpx
 from typing import List, Optional
 
 from src.runtime_paths import get_app_root
+
+# numpy is imported lazily (first encode()) rather than at module import.
+# Its OpenBLAS DLL can deadlock inside DllMain on some Windows setups when
+# loaded from a console-less child process (the desktop engine), and nothing
+# here needs it until vectors actually get computed.
+def _np():
+    import numpy as np  # noqa: WPS433 - deliberate lazy import
+    return np
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +81,7 @@ class EmbeddingClient:
         self, texts: List[str], normalize_embeddings: bool = True
     ) -> np.ndarray:
         """Encode texts via the API. Returns (N, dim) float32 array."""
+        np = _np()
         if not texts:
             return np.array([], dtype="float32")
 
@@ -195,6 +205,7 @@ class FastEmbedClient:
         self, texts: List[str], normalize_embeddings: bool = True
     ) -> np.ndarray:
         """Encode texts locally. Returns (N, dim) float32 array."""
+        np = _np()
         if not texts:
             return np.array([], dtype="float32")
 
