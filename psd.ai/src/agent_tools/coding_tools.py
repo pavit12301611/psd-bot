@@ -389,7 +389,10 @@ class RegexTestTool:
         flags_str = ""
         max_matches = 20
 
-        if stripped.startswith("{"):
+        if stripped.startswith(("{", "[")):
+            # Structured args path — anything that isn't a JSON object is a
+            # malformed call (e.g. a bare array); fail closed instead of
+            # guessing that "[1, 2]" is a pattern.
             try:
                 args = json.loads(stripped)
             except (json.JSONDecodeError, TypeError):
