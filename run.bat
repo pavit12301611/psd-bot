@@ -27,6 +27,8 @@ REM ==================================================================
 set "ROOT=%~dp0"
 set "APP_DIR=%ROOT%psd.ai"
 set "DESKTOP_DIR=%ROOT%desktop"
+REM Models + llama.cpp live OUTSIDE this folder in %LOCALAPPDATA%\psd.ai\runtime
+REM (override with PSD_AI_RUNTIME_DIR), so a fresh copy of the code reuses them.
 REM Base port for the local model group, and how long to wait for a
 REM first-run model download before opening the app anyway. Override by
 REM setting these in the environment before double-clicking run.bat.
@@ -152,7 +154,10 @@ if not defined PSD_NO_LOCAL_MODEL (
     echo  ==^> Starting the local model group in a second window...
     echo      First run downloads llama.cpp + 3-5 fit model weights ^(a few GB each^).
     echo      Keep that window open while you use psd.ai - closing it stops the model group.
-    if exist "runtime\local_model_failed.txt" del /q "runtime\local_model_failed.txt"
+    if not defined PSD_AI_RUNTIME_DIR set "PSD_AI_RUNTIME_DIR=%LOCALAPPDATA%\psd.ai\runtime"
+    echo      Models are stored on this PC at %PSD_AI_RUNTIME_DIR%
+    echo      ^(outside the project folder, so re-downloading the code never re-downloads models^).
+    if exist "%PSD_AI_RUNTIME_DIR%\local_model_failed.txt" del /q "%PSD_AI_RUNTIME_DIR%\local_model_failed.txt"
     start "psd.ai - local model group" cmd /k ""%VENVPY%" scripts\local_llama.py --port %LLAMA_PORT% --foreground"
     "%VENVPY%" scripts\local_llama.py --wait-ready %MODEL_WAIT_SECONDS%
 ) else (

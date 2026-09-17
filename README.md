@@ -29,9 +29,13 @@ window to stop.
 
 Step 4 opens a **second window** titled *psd.ai - local model group*. On the
 first run it downloads three to five hardware-fit GGUF models concurrently and
-runs one `llama-server` per model on ports starting at `8080`. Later launches
-reuse everything cached under `psd.ai/runtime/` (git-ignored), so they start in
-a few seconds.
+runs one `llama-server` per model on ports starting at `8080`. Everything is
+cached **on the device, outside the project folder** — `%LOCALAPPDATA%\psd.ai\runtime`
+on Windows (`~/Library/Application Support/psd.ai/runtime` on macOS,
+`~/.local/share/psd.ai/runtime` on Linux; override with `PSD_AI_RUNTIME_DIR`).
+So you can delete or re-download the code as often as you like and later
+launches still start in a few seconds. An old `psd.ai/runtime/` folder is
+moved there automatically.
 
 It measures your RAM, GPU and CPU, then selects the strongest group that can
 stay resident together. The group never has fewer than three models and never
@@ -86,6 +90,7 @@ not already chosen one, so an existing setup is never overwritten.
 | --- | --- |
 | set `PSD_NO_LOCAL_MODEL=1` | skip the local model group entirely and bring your own |
 | set `LLAMA_PORT=9090` | use 9090 as the first model port (the group uses the next ports too) |
+| set `PSD_AI_RUNTIME_DIR=D:\ai-models` | keep llama.cpp + model weights somewhere else (e.g. a bigger drive) |
 | run `python scripts\local_llama.py --print` | show the hardware-fit group, no downloads |
 | run `python scripts\local_llama.py --model llama-3.2-3b` | prefer a model while filling the group |
 | run `python scripts\local_llama.py --single-model` | use the legacy one-model mode |
