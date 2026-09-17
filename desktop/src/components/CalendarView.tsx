@@ -22,6 +22,7 @@ export default function CalendarView() {
   const [picked, setPicked] = useState<string | null>(null);
   const [draft, setDraft] = useState({ summary: "", time: "09:00", description: "" });
   const [editing, setEditing] = useState<CalEvent | null>(null);
+  const [editDraft, setEditDraft] = useState({ summary: "", description: "", time: "09:00" });
 
   const range = useMemo(() => {
     const start = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
@@ -123,6 +124,12 @@ export default function CalendarView() {
                       onClick={(ev) => {
                         ev.stopPropagation();
                         setEditing(e);
+                        const start = parseDate(e.dtstart);
+                        setEditDraft({
+                          summary: e.summary || "",
+                          description: e.description || "",
+                          time: `${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`,
+                        });
                         setPicked(null);
                       }}
                     >
@@ -141,7 +148,7 @@ export default function CalendarView() {
             {editing ? (
               <>
                 <div className="mb-2 flex items-center justify-between">
-                  <h3 className="font-semibold">{editing.summary}</h3>
+                  <h3 className="font-semibold">Edit event</h3>
                   <button
                     className="icon-btn hover:!text-red-400"
                     onClick={async () => {
@@ -153,14 +160,33 @@ export default function CalendarView() {
                     <Trash2 size={15} />
                   </button>
                 </div>
-                <p className="text-[13px]" style={{ color: "var(--muted)" }}>
-                  {parseDate(editing.dtstart).toLocaleString()}
-                  {editing.location ? ` · ${editing.location}` : ""}
-                </p>
-                {editing.description && <p className="mt-2 text-[13px]">{editing.description}</p>}
-                <button className="btn mt-3" onClick={() => setEditing(null)}>
-                  Close
-                </button>
+                <div className="flex flex-col gap-2">
+                  <input className="input" value={editDraft.summary} onChange={(e) => setEditDraft({ ...editDraft, summary: e.target.value })} />
+                  <input className="input w-36" type="time" value={editDraft.time} onChange={(e) => setEditDraft({ ...editDraft, time: e.target.value })} />
+                  <textarea className="input min-h-[70px] resize-y" placeholder="Notes" value={editDraft.description} onChange={(e) => setEditDraft({ ...editDraft, description: e.target.value })} />
+                  {editing.location && <p className="text-[13px]" style={{ color: "var(--muted)" }}>{editing.location}</p>}
+                  <div className="flex gap-2">
+                    <button className="btn btn-primary" disabled={!editDraft.summary.trim()} onClick={async () => {
+                      try {
+                        const day = localYmd(parseDate(editing.dtstart));
+                        const dtstart = new Date(`${day}T${editDraft.time}:00`);
+                        const dtend = new Date(dtstart.getTime() + 60 * 60 * 1000);
+                        await api.updateEvent(editing.uid || editing.id || "", {
+                          summary: editDraft.summary.trim(),
+                          description: editDraft.description,
+                          dtstart: dtstart.toISOString(),
+                          dtend: dtend.toISOString(),
+                        });
+                        toast("Event updated", "success");
+                        setEditing(null);
+                        load();
+                      } catch (e: any) {
+                        toast(e.message || "Could not update event", "error");
+                      }
+                    }}>Save</button>
+                    <button className="btn" onClick={() => setEditing(null)}>Close</button>
+                  </div>
+                </div>
               </>
             ) : (
               <>

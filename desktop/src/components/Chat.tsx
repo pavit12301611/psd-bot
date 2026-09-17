@@ -35,7 +35,8 @@ export default function Chat() {
   const messages = useApp((s) => (s.activeSessionId ? s.messages[s.activeSessionId] || NO_MESSAGES : NO_MESSAGES));
   const loading = useApp((s) => s.loadingHistory);
   const send = useApp((s) => s.send);
-  const session = useApp((s) => s.sessions.find((x) => x.id === s.activeSessionId));
+  const sessions = useApp((s) => s.sessions);
+  const session = useMemo(() => sessions.find((x) => x.id === sid), [sessions, sid]);
   const user = useApp((s) => s.authStatus?.username);
   const setView = useApp((s) => s.setView);
   const deleteSession = useApp((s) => s.deleteSession);
@@ -169,6 +170,7 @@ export default function Chat() {
                 onClick={() => {
                   const r = menuBtn.current?.getBoundingClientRect();
                   if (r) setMenuPos({ top: r.bottom + 6, right: window.innerWidth - r.right });
+                  setFolderDraft(session.folder || "");
                   setMenu((v) => !v);
                 }}
               >
@@ -195,7 +197,7 @@ export default function Chat() {
                       <input
                         className="input h-7 text-[12px]"
                         placeholder="Move to folder"
-                        defaultValue={session.folder || ""}
+                        value={folderDraft}
                         onChange={(e) => setFolderDraft(e.target.value)}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") {

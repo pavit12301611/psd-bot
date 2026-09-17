@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import { prefersReducedMotion } from "../lib/ui";
 
 /** Full-window modal shell: covers the title bar, traps focus, closes on Esc / backdrop. */
 export default function Overlay({
@@ -73,10 +74,10 @@ export default function Overlay({
             role="dialog"
             aria-modal="true"
             aria-labelledby={labelledBy}
-            initial={{ opacity: 0, scale: 0.96, y: 10 }}
+            initial={prefersReducedMotion() ? { opacity: 1 } : { opacity: 0, scale: 0.96, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96, y: 10 }}
-            transition={{ type: "spring", stiffness: 420, damping: 34 }}
+            exit={prefersReducedMotion() ? { opacity: 0 } : { opacity: 0, scale: 0.96, y: 10 }}
+            transition={prefersReducedMotion() ? { duration: 0.01 } : { type: "spring", stiffness: 420, damping: 34 }}
             className="relative max-h-[min(90vh,720px)] w-full overflow-hidden"
             onMouseDown={(e) => e.stopPropagation()}
           >

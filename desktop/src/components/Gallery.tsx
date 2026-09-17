@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Images, Heart, Trash2, Upload, Search, X } from "lucide-react";
+import { Images, Heart, Trash2, Upload, Search, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { gallery as api, type GalleryImage } from "../lib/api";
 import { useApp } from "../store/app";
 import { ApiImage, Empty, PanelHead } from "./media";
@@ -90,14 +90,26 @@ export default function Gallery() {
               <button className="icon-btn" title="Favorite" onClick={async () => { await api.favorite(open.id); setOpen({ ...open, favorite: !open.favorite }); load(); }}>
                 <Heart size={16} fill={open.favorite ? "currentColor" : "none"} style={{ color: open.favorite ? "var(--accent)" : undefined }} />
               </button>
-              <button className="icon-btn hover:!text-red-400" title="Delete" onClick={async () => { await api.remove(open.id); setOpen(null); load(); }}>
+              <button className="icon-btn hover:!text-red-400" title="Delete" onClick={async () => { if (!window.confirm("Delete this image?")) return; await api.remove(open.id); setOpen(null); load(); }}>
                 <Trash2 size={16} />
               </button>
               <button className="icon-btn" onClick={() => setOpen(null)}>
                 <X size={16} />
               </button>
             </div>
-            <ApiImage src={open.url} alt="" className="max-h-[70vh] w-full rounded-2xl object-contain" />
+            <div className="relative">
+              {items.findIndex((x) => x.id === open.id) > 0 && (
+                <button className="icon-btn absolute left-2 top-1/2 z-10 -translate-y-1/2" title="Previous" onClick={() => { const i = items.findIndex((x) => x.id === open.id); if (items[i - 1]) setOpen(items[i - 1]); }}>
+                  <ChevronLeft size={18} />
+                </button>
+              )}
+              {items.findIndex((x) => x.id === open.id) < items.length - 1 && (
+                <button className="icon-btn absolute right-2 top-1/2 z-10 -translate-y-1/2" title="Next" onClick={() => { const i = items.findIndex((x) => x.id === open.id); if (items[i + 1]) setOpen(items[i + 1]); }}>
+                  <ChevronRight size={18} />
+                </button>
+              )}
+              <ApiImage src={open.url} alt="" className="max-h-[70vh] w-full rounded-2xl object-contain" />
+            </div>
           </div>
         </div>
       )}

@@ -10,6 +10,8 @@ export default function Tasks() {
   const [draft, setDraft] = useState({ name: "", prompt: "", schedule: "daily", scheduled_time: "09:00" });
   const [showNew, setShowNew] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [openRuns, setOpenRuns] = useState<string | null>(null);
+  const [runs, setRuns] = useState<any[]>([]);
 
   const load = async () => {
     try {
@@ -98,7 +100,8 @@ export default function Tasks() {
           {list.map((t) => {
             const paused = t.status === "paused" || t.status === "disabled";
             return (
-              <div key={t.id} className="card flex items-start gap-3">
+              <div key={t.id} className="card flex flex-col gap-2">
+              <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="font-medium">{t.name}</span>
@@ -142,6 +145,30 @@ export default function Tasks() {
                     <Trash2 size={14} />
                   </button>
                 </div>
+              </div>
+              <button className="self-start text-[11px]" style={{ color: "var(--muted)" }} onClick={async () => {
+                if (openRuns === t.id) { setOpenRuns(null); return; }
+                try {
+                  const r = await api.runs(t.id);
+                  setRuns(r.runs || []);
+                  setOpenRuns(t.id);
+                } catch (e: any) {
+                  toast(e.message || "Could not load runs", "error");
+                }
+              }}>
+                {openRuns === t.id ? "Hide runs" : "Run history"}
+              </button>
+              {openRuns === t.id && (
+                <div className="rounded-xl p-2 text-[12px]" style={{ background: "var(--bg-sunken)" }}>
+                  {runs.length === 0 && <div style={{ color: "var(--muted)" }}>No runs yet.</div>}
+                  {runs.slice(0, 8).map((r, i) => (
+                    <div key={r.id || i} className="flex gap-2 py-0.5">
+                      <span>{r.status || r.state || "run"}</span>
+                      <span className="ml-auto" style={{ color: "var(--muted)" }}>{fmt(r.started_at || r.created_at || r.ts || "")}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               </div>
             );
           })}

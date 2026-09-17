@@ -43,12 +43,14 @@ export default function CommandPalette() {
   const newChat = useApp((s) => s.newChat);
   const send = useApp((s) => s.send);
   const [q, setQ] = useState("");
+  const [hi, setHi] = useState(0);
   const [webHits, setWebHits] = useState<{ title?: string; url?: string; snippet?: string }[] | null>(null);
   const [webBusy, setWebBusy] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setQ("");
+    setHi(0);
     setWebHits(null);
     const h = (e: KeyboardEvent) => e.key === "Escape" && close();
     window.addEventListener("keydown", h);
@@ -81,6 +83,21 @@ export default function CommandPalette() {
     }
   };
 
+  const rows = useMemo(() => {
+    const out: { id: string; run: () => void }[] = [{ id: "new", run: () => { newChat(); close(); } }];
+    for (const j of jumps) out.push({ id: `jump-${j.id}`, run: () => { setView(j.id); close(); } });
+    for (const s of chats) out.push({ id: s.id, run: () => { setView("chat"); select(s.id); close(); } });
+    if (q.trim()) {
+      out.push({ id: "ask", run: () => { setView("chat"); close(); send(q.trim()); } });
+      out.push({ id: "web", run: () => { void runWeb(); } });
+    }
+    return out;
+  }, [jumps, chats, q, newChat, close, setView, select, send]);
+
+  useEffect(() => {
+    setHi(0);
+  }, [q]);
+
   return (
     <Overlay open={open} onClose={close} labelledBy="palette-title">
           <div className="glass w-full max-w-xl overflow-hidden rounded-2xl" style={{ boxShadow: "var(--shadow)" }}>
@@ -94,11 +111,18 @@ export default function CommandPalette() {
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && e.metaKey) runWeb();
-                  if (e.key === "Enter" && !e.metaKey && chats[0]) {
-                    setView("chat");
-                    select(chats[0].id);
-                    close();
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setHi((v) => Math.min(rows.length - 1, v + 1));
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setHi((v) => Math.max(0, v - 1));
+                  } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    runWeb();
+                  } else if (e.key === "Enter") {
+                    e.preventDefault();
+                    rows[hi]?.run();
                   }
                 }}
               />
@@ -110,6 +134,7 @@ export default function CommandPalette() {
               <Row
                 icon={<Plus size={14} />}
                 label="New chat"
+                active={rows[hi]?.id === "new"}
                 onClick={() => {
                   newChat();
                   close();
@@ -124,6 +149,7 @@ export default function CommandPalette() {
                         key={j.id}
                         icon={<Icon size={14} />}
                         label={j.label}
+                        active={rows[hi]?.id === `jump-${j.id}`}
                         onClick={() => {
                           setView(j.id);
                           close();
@@ -141,6 +167,7 @@ export default function CommandPalette() {
                       icon={<MessageSquare size={14} />}
                       label={s.name}
                       hint={s.model?.split("/").pop()}
+                      active={rows[hi]?.id === s.id}
                       onClick={() => {
                         setView("chat");
                         select(s.id);
@@ -193,9 +220,9 @@ function Group({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function Row({ icon, label, hint, onClick }: { icon: React.ReactNode; label: string; hint?: string; onClick: () => void }) {
+function Row({ icon, label, hint, onClick, active }: { icon: React.ReactNode; label: string; hint?: string; onClick: () => void; active?: boolean }) {
   return (
-    <button className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[13px] hover:bg-[var(--accent-soft)]" onClick={onClick}>
+    <button className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[13px] hover:bg-[var(--accent-soft)]" style={active ? { background: "var(--accent-soft)" } : undefined} onClick={onClick}>
       <span style={{ color: "var(--muted)" }}>{icon}</span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {hint && (

@@ -14,6 +14,8 @@ export default function Memory() {
   const [cat, setCat] = useState("fact");
   const [skillDraft, setSkillDraft] = useState({ title: "", problem: "", solution: "" });
   const [skillUrl, setSkillUrl] = useState("");
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
 
   const loadMem = async () => {
     try {
@@ -102,7 +104,31 @@ export default function Memory() {
               {filtered.map((m) => (
                 <div key={m.id} className="card flex items-start gap-3">
                   <div className="min-w-0 flex-1">
-                    <p className="text-[13.5px] leading-relaxed">{m.text}</p>
+                    {editId === m.id ? (
+                      <textarea
+                        autoFocus
+                        className="input min-h-[64px] text-[13.5px]"
+                        value={editText}
+                        onChange={(e) => setEditText(e.target.value)}
+                        onBlur={async () => {
+                          const next = editText.trim();
+                          setEditId(null);
+                          if (!next || next === m.text) return;
+                          try {
+                            await memApi.update(m.id, { text: next });
+                            loadMem();
+                          } catch (e: any) {
+                            toast(e.message || "Could not update", "error");
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) (e.target as HTMLTextAreaElement).blur();
+                          if (e.key === "Escape") setEditId(null);
+                        }}
+                      />
+                    ) : (
+                      <p className="cursor-text text-[13.5px] leading-relaxed" title="Click to edit" onClick={() => { setEditId(m.id); setEditText(m.text); }}>{m.text}</p>
+                    )}
                     <div className="mt-1 flex gap-2 text-[11px]" style={{ color: "var(--muted)" }}>
                       <span className="pill" data-on="true">{m.category || "fact"}</span>
                       {m.source && <span>{m.source}</span>}

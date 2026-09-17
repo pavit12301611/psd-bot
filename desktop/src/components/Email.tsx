@@ -15,6 +15,7 @@ export default function Email() {
   const [folders, setFolders] = useState<string[]>(["INBOX"]);
   const [compose, setCompose] = useState(false);
   const [draft, setDraft] = useState({ to: "", subject: "", body: "" });
+  const [accountId, setAccountId] = useState<string | undefined>(undefined);
 
   const loadAccounts = async () => {
     try {
@@ -26,7 +27,7 @@ export default function Email() {
   };
   const loadList = async () => {
     try {
-      const r = await api.list({ filter, folder, limit: 50 });
+      const r = await api.list({ filter, folder, limit: 50, account_id: accountId });
       setList(r.emails || []);
     } catch (e: any) {
       toast(e.message || "Could not load inbox", "error");
@@ -39,12 +40,12 @@ export default function Email() {
   useEffect(() => {
     if (accounts.length) {
       loadList();
-      api.folders().then((r) => {
+      api.folders(accountId).then((r) => {
         const names = (r.folders || []).map((f: any) => (typeof f === "string" ? f : f.name || f.id)).filter(Boolean);
         if (names.length) setFolders(names);
       }).catch(() => {});
     }
-  }, [filter, folder, accounts.length]);
+  }, [filter, folder, accounts.length, accountId]);
 
   const open = async (m: EmailMsg) => {
     try {
@@ -79,6 +80,14 @@ export default function Email() {
             </button>
           ))}
         </div>
+        {accounts.length > 1 && (
+          <select className="input h-8 w-40 text-[12px]" value={accountId || ""} onChange={(e) => setAccountId(e.target.value || undefined)}>
+            <option value="">All accounts</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>{a.name || a.from_address || a.id}</option>
+            ))}
+          </select>
+        )}
         <select className="input h-8 w-36 text-[12px]" value={folder} onChange={(e) => setFolder(e.target.value)}>
           {folders.map((f) => (
             <option key={f} value={f}>{f}</option>
@@ -136,6 +145,15 @@ export default function Email() {
                     <h3 className="text-[16px] font-semibold">{active.subject || "(no subject)"}</h3>
                     <p className="text-[13px]" style={{ color: "var(--muted)" }}>{active.from || active.from_name} · {active.date ? new Date(active.date).toLocaleString() : ""}</p>
                   </div>
+                  <button className="btn h-8" title="Mark unread" onClick={async () => {
+                    try {
+                      await api.markUnread(active.uid, folder);
+                      setActive(null);
+                      loadList();
+                    } catch (e: any) {
+                      toast(e.message || "Could not mark unread", "error");
+                    }
+                  }}>Unread</button>
                   <button className="btn h-8" onClick={() => {
                     setCompose(true);
                     setDraft({

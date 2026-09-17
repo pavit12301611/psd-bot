@@ -431,9 +431,12 @@ export default function ModelsHub() {
                             onClick={async () => {
                               try {
                                 const state = await cookbook.state();
+                                const task = (state.tasks || []).find((t: any) => t.sessionId === j.session_id || t.id === j.session_id);
+                                const pid = Number(task?.pid || task?.processId || (j as any).pid || 0);
+                                if (pid > 0) await cookbook.killPid(pid).catch(() => {});
                                 const tasks = (state.tasks || []).filter((t: any) => t.sessionId !== j.session_id && t.id !== j.session_id);
                                 await cookbook.saveState({ ...state, tasks, removedTasks: [...(state.removedTasks || []), j.session_id] });
-                                toast("Dismissed from the list. The download may still finish on disk.", "info");
+                                toast(pid > 0 ? "Stopped the download process." : "Dismissed from the list. The download may still finish on disk.", pid > 0 ? "success" : "info");
                                 loadJobs();
                               } catch (e: any) {
                                 toast(e.message || "Couldn't dismiss", "error");

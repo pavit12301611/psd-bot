@@ -1,6 +1,8 @@
-import { useMemo, useState } from "react";
-import { Columns2, Play, Trophy } from "lucide-react";
-import { compare as api, sendChat } from "../lib/api";
+import { useMemo, useRef, useState } from "react";
+import { Columns2, Play, Square, Trophy } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { compare as api, sendChat, type StreamHandle } from "../lib/api";
 import { useApp } from "../store/app";
 import { Empty, PanelHead } from "./media";
 
@@ -35,6 +37,20 @@ export default function Compare() {
   const [panes, setPanes] = useState<[Pane, Pane] | null>(null);
   const [compId, setCompId] = useState<string | null>(null);
   const [voted, setVoted] = useState<string | null>(null);
+  const handles = useRef<StreamHandle[]>([]);
+
+  const cancelRun = () => {
+    handles.current.forEach((h) => h.cancel());
+    handles.current = [];
+    setPanes((cur) => {
+      if (!cur) return cur;
+      return [
+        { ...cur[0], streaming: false },
+        { ...cur[1], streaming: false },
+      ];
+    });
+    setCompareBusy(false);
+  };
 
   const run = async () => {
     if (!prompt.trim() || models.length < 2) return;
@@ -70,9 +86,11 @@ export default function Compare() {
       setPanes(p);
       const sessions = [r.session_left, r.session_right];
       const routes = [left, right];
+      handles.current.forEach((h) => h.cancel());
+      handles.current = [];
       sessions.forEach((sid, idx) => {
         if (!sid) return;
-        sendChat(
+        handles.current[idx] = sendChat(
           {
             sessionId: sid,
             message: prompt.trim(),
@@ -142,9 +160,15 @@ export default function Compare() {
   return (
     <section className="panel">
       <PanelHead icon={<Columns2 size={16} />} title="Compare models">
-        <button className="btn btn-primary h-8" disabled={!prompt.trim() || models.length < 2} onClick={run}>
-          <Play size={14} /> Run
-        </button>
+        {panes?.some((p) => p.streaming) ? (
+          <button className="btn h-8" onClick={cancelRun}>
+            <Square size={14} /> Cancel
+          </button>
+        ) : (
+          <button className="btn btn-primary h-8" disabled={!prompt.trim() || models.length < 2} onClick={run}>
+            <Play size={14} /> Run
+          </button>
+        )}
       </PanelHead>
       <div className="panel-body flex flex-col gap-3">
         {models.length < 2 ? (
@@ -174,8 +198,8 @@ export default function Compare() {
                         {p.label}
                         {p.streaming && <span className="dots"><span /><span /><span /></span>}
                       </div>
-                      <div className="selectable flex-1 overflow-auto whitespace-pre-wrap text-[13.5px] leading-relaxed">
-                        {p.content || (p.streaming ? "" : "—")}
+                      <div className="md selectable flex-1 overflow-auto text-[13.5px] leading-relaxed">
+                        {p.content ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{p.content}</ReactMarkdown> : p.streaming ? "" : "—"}
                       </div>
                       {p.error && <div className="mt-2 text-[12px] text-red-400">{p.error}</div>}
                     </div>

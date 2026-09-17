@@ -29,6 +29,7 @@ export default function Composer() {
   const [uploading, setUploading] = useState(false);
   const [recording, setRecording] = useState(false);
   const [slashOpen, setSlashOpen] = useState(false);
+  const [slashHi, setSlashHi] = useState(0);
   const ta = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const recRef = useRef<MediaRecorder | null>(null);
@@ -78,6 +79,7 @@ export default function Composer() {
 
   useEffect(() => {
     setSlashOpen(slashHits.length > 0 && !text.includes(" "));
+    setSlashHi(0);
   }, [text, slashHits.length]);
 
   const submit = () => {
@@ -98,12 +100,24 @@ export default function Composer() {
   };
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (slashOpen && (e.key === "Tab" || e.key === "Enter") && slashHits[0]) {
-      e.preventDefault();
-      slashHits[0].run(useApp.getState());
-      setText("");
-      setSlashOpen(false);
-      return;
+    if (slashOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSlashHi((v) => Math.min(slashHits.length - 1, v + 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashHi((v) => Math.max(0, v - 1));
+        return;
+      }
+      if ((e.key === "Tab" || e.key === "Enter") && (slashHits[slashHi] || slashHits[0])) {
+        e.preventDefault();
+        (slashHits[slashHi] || slashHits[0]).run(useApp.getState());
+        setText("");
+        setSlashOpen(false);
+        return;
+      }
     }
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
@@ -183,10 +197,11 @@ export default function Composer() {
 
         {slashOpen && (
           <div className="mb-1 overflow-hidden rounded-2xl" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
-            {slashHits.slice(0, 6).map((s) => (
+            {slashHits.slice(0, 6).map((s, i) => (
               <button
                 key={s.token}
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] hover:bg-[var(--accent-soft)]"
+                style={{ background: i === slashHi ? "var(--accent-soft)" : undefined }}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   s.run(useApp.getState());

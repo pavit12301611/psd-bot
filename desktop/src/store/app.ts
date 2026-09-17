@@ -199,6 +199,7 @@ function lsSet(key: string, value: string) {
 
 function chatCapable(item: ModelItem) {
   const t = (item.model_type || "llm").toLowerCase();
+  if (t === "embedding" || t === "tts" || t === "stt" || t === "whisper" || t === "moderation" || t === "rerank") return false;
   return t === "llm" || t === "image" || t === "vision" || t === "multimodal" || t === "vlm" || t === "";
 }
 
@@ -416,8 +417,10 @@ export const useApp = create<AppState>((set, getState) => ({
   },
 
   newChat: () => {
-    if (getState().streaming) getState().stop();
-    set({ activeSessionId: null, view: "chat", sidebarOpen: window.innerWidth > 900 ? getState().sidebarOpen : false });
+    void (async () => {
+      if (getState().streaming) await getState().stop();
+      set({ activeSessionId: null, view: "chat", sidebarOpen: window.innerWidth > 900 ? getState().sidebarOpen : false });
+    })();
   },
 
   deleteSession: async (id) => {

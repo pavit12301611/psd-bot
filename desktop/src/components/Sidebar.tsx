@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Plus, Search, MessageSquare, Trash2, Pencil, Settings, LogOut, Check, X, Star, Archive, Folder } from "lucide-react";
+import { Plus, Search, MessageSquare, Trash2, Pencil, Settings, LogOut, Check, X, Star, Archive, Folder, Sparkles } from "lucide-react";
 import { useApp } from "../store/app";
+import { sessions as sessionsApi, type Session } from "../lib/api";
 import { metaLabel } from "../lib/ui";
 
 function groupLabel(ts?: string) {
@@ -40,9 +41,19 @@ export default function Sidebar() {
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [showArchived, setShowArchived] = useState(false);
+  const [archived, setArchived] = useState<Session[]>([]);
+  const [tidyBusy, setTidyBusy] = useState(false);
+  const unarchive = useApp((s) => s.unarchiveSession);
+  const toast = useApp((s) => s.toast);
+
+  useEffect(() => {
+    if (!showArchived) return;
+    sessionsApi.listArchived({ limit: 80 }).then((r) => setArchived(r.sessions || [])).catch(() => setArchived([]));
+  }, [showArchived]);
 
   const groups = useMemo(() => {
-    const filtered = sessions.filter((s) => !s.archived && (!q || s.name.toLowerCase().includes(q.toLowerCase())));
+    const filtered = sessions.filter((s) => !s.archived && !s.folder && (!q || s.name.toLowerCase().includes(q.toLowerCase())) && (q || !s.is_important));
     const sorted = filtered.slice().sort((a, b) => Date.parse(b.last_message_at || b.updated_at || b.created_at || "0") - Date.parse(a.last_message_at || a.updated_at || a.created_at || "0"));
     const out: { label: string; items: typeof sessions }[] = [];
     for (const s of sorted) {
@@ -80,6 +91,25 @@ export default function Sidebar() {
           <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--muted)" }} />
           <input className="input h-9 pl-9 text-[13px]" placeholder="Filter chats" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
+        <div className="flex gap-1">
+          <button className="btn h-8 flex-1 text-[12px]" disabled={tidyBusy} onClick={async () => {
+            setTidyBusy(true);
+            try {
+              const r = await sessionsApi.autoSort();
+              toast(r.skipped_llm ? "Tidied empty chats" : `Sorted into ${(r.folders || []).length || 0} folders`, "success");
+              await useApp.getState().loadSessions();
+            } catch (e: any) {
+              toast(e.message || "Tidy failed", "error");
+            } finally {
+              setTidyBusy(false);
+            }
+          }}>
+            <Sparkles size={12} /> Tidy
+          </button>
+          <button className="btn h-8 flex-1 text-[12px]" data-on={showArchived} onClick={() => setShowArchived((v) => !v)}>
+            <Archive size={12} /> Archive
+          </button>
+        </div>
       </div>
 
       {picked.length > 0 && (
@@ -92,6 +122,20 @@ export default function Sidebar() {
       )}
 
       <div className="flex-1 overflow-y-auto px-2 pb-2">
+        {showArchived && (
+          <div className="mb-2">
+            <div className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--muted)" }}>
+              Archived ({archived.length})
+            </div>
+            {archived.length === 0 && <p className="px-3 py-2 text-[12px]" style={{ color: "var(--muted)" }}>Nothing archived.</p>}
+            {archived.map((s) => (
+              <div key={s.id} className="flex items-center gap-1 rounded-xl px-2 py-1.5">
+                <button className="min-w-0 flex-1 truncate text-left text-[13px]" onClick={async () => { await unarchive(s.id); setArchived((a) => a.filter((x) => x.id !== s.id)); }}>{s.name}</button>
+                <button className="btn h-7 px-2 text-[11px]" onClick={async () => { await unarchive(s.id); setArchived((a) => a.filter((x) => x.id !== s.id)); }}>Restore</button>
+              </div>
+            ))}
+          </div>
+        )}
         {folders.map(([name, items]) => (
           <div key={name} className="mb-2">
             <button className="flex w-full items-center gap-1.5 px-3 pb-1 pt-2 text-left text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--muted)" }} onClick={() => setCollapsed((c) => ({ ...c, [name]: !c[name] }))}>
