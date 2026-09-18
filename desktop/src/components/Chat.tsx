@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import {
   ArrowDown, Sparkles, Code2, Lightbulb, PenLine, HardDrive, StickyNote, ListTodo, CalendarDays, Telescope,
-  Copy, Trash2, Download, Star, MoreHorizontal, EyeOff, GitFork, Minimize2, Archive, Folder,
+  Copy, Trash2, Download, Star, MoreHorizontal, EyeOff, GitFork, Minimize2, Archive, Folder, Globe,
 } from "lucide-react";
 import { useApp, type Message } from "../store/app";
 import { sessions as sessionsApi, uploads } from "../lib/api";
@@ -11,6 +11,7 @@ import { downloadText, MAX_UPLOAD_BYTES } from "../lib/ui";
 import MessageView from "./Message";
 import Composer from "./Composer";
 import ModelPicker from "./ModelPicker";
+import EmbeddedBrowser from "./EmbeddedBrowser";
 
 const NO_MESSAGES: Message[] = [];
 const PAGE = 80;
@@ -52,6 +53,11 @@ export default function Chat() {
   const streaming = useApp((s) => s.streaming);
   const contextLimit = useApp((s) => s.contextLimit);
   const route = useApp((s) => s.route);
+  const browserOpen = useApp((s) => s.browserOpen);
+  const setBrowserOpen = useApp((s) => s.setBrowserOpen);
+  const toggleBrowser = useApp((s) => s.toggleBrowser);
+  const browserStatus = useApp((s) => s.browserStatus);
+  const browserSplitRatio = useApp((s) => s.browserSplitRatio);
   const scroller = useRef<HTMLDivElement>(null);
   const [stuck, setStuck] = useState(true);
   const [menu, setMenu] = useState(false);
@@ -155,7 +161,21 @@ export default function Chat() {
             {ctxPct}% context
           </span>
         )}
-        <div className="ml-auto flex shrink-0 items-center gap-0.5">
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          <button
+            className="pill h-8 gap-1.5"
+            data-on={browserOpen}
+            title="Live Embedded Browser"
+            onClick={toggleBrowser}
+          >
+            <Globe size={13} />
+            <span className="hidden sm:inline">Live Browser</span>
+            {browserStatus === "navigating" || browserStatus === "searching" || browserStatus === "busy" ? (
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+            ) : (
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            )}
+          </button>
           <button className="pill h-8" data-on={incognito} title="Nobody mode — nothing is saved" onClick={toggleIncognito}>
             <EyeOff size={12} /> Nobody
           </button>
@@ -234,88 +254,112 @@ export default function Chat() {
         </div>
       )}
 
-      <div ref={scroller} onScroll={onScroll} className="relative z-10 flex-1 overflow-y-auto px-4">
-        <div className="mx-auto flex max-w-3xl flex-col gap-6 py-4">
-          <AnimatePresence mode="wait">
-            {!sid && (
-              <motion.div key="empty" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="flex min-h-[55vh] flex-col items-center justify-center gap-8">
-                <div className="text-center">
-                  <motion.img src="/icon.png" alt="" className="mx-auto mb-4 h-16 w-16 rounded-2xl" draggable={false} initial={{ scale: 0.8, rotate: -6 }} animate={{ scale: 1, rotate: 0 }} transition={{ type: "spring", stiffness: 260, damping: 18 }} />
-                  <h1 className="text-[26px] font-semibold tracking-tight">
-                    {greet}
-                    {user ? `, ${user}` : ""}.
-                  </h1>
-                  <p className="mt-1 text-[15px]" style={{ color: "var(--muted)" }}>
-                    What can I help you with today?
-                  </p>
-                </div>
-                <div className="flex w-full max-w-2xl flex-wrap justify-center gap-2">
-                  {QUICK.map((s) => (
-                    <button key={s.view} className="pill" onClick={() => setView(s.view)}>
-                      {s.icon} {s.title}
-                    </button>
+      {/* Main Workspace (Split when Embedded Browser is active) */}
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
+        {/* Left Column: Chat Conversation & Composer */}
+        <div
+          className="relative flex h-full min-w-0 flex-col overflow-hidden transition-[width] duration-200"
+          style={{ width: browserOpen ? `${100 - browserSplitRatio}%` : "100%" }}
+        >
+          <div ref={scroller} onScroll={onScroll} className="relative z-10 flex-1 overflow-y-auto px-4">
+            <div className="mx-auto flex max-w-3xl flex-col gap-6 py-4">
+              <AnimatePresence mode="wait">
+                {!sid && (
+                  <motion.div key="empty" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="flex min-h-[55vh] flex-col items-center justify-center gap-8">
+                    <div className="text-center">
+                      <motion.img src="/icon.png" alt="" className="mx-auto mb-4 h-16 w-16 rounded-2xl" draggable={false} initial={{ scale: 0.8, rotate: -6 }} animate={{ scale: 1, rotate: 0 }} transition={{ type: "spring", stiffness: 260, damping: 18 }} />
+                      <h1 className="text-[26px] font-semibold tracking-tight">
+                        {greet}
+                        {user ? `, ${user}` : ""}.
+                      </h1>
+                      <p className="mt-1 text-[15px]" style={{ color: "var(--muted)" }}>
+                        What can I help you with today?
+                      </p>
+                    </div>
+                    <div className="flex w-full max-w-2xl flex-wrap justify-center gap-2">
+                      {QUICK.map((s) => (
+                        <button key={s.view} className="pill" onClick={() => setView(s.view)}>
+                          {s.icon} {s.title}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="grid w-full max-w-2xl grid-cols-1 gap-2.5 sm:grid-cols-2">
+                      {SUGGESTIONS.map((s, i) => (
+                        <motion.button key={s.title} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.06 * i }} whileHover={{ y: -2 }} className="glass flex flex-col items-start gap-1.5 rounded-2xl p-4 text-left transition-shadow hover:shadow-lg" onClick={() => send(s.text)}>
+                          <span className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: "var(--accent)" }}>
+                            {s.icon} {s.title}
+                          </span>
+                          <span className="text-[13px] leading-snug" style={{ color: "var(--muted)" }}>
+                            {s.text}
+                          </span>
+                        </motion.button>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {sid && loading && messages.length === 0 && (
+                <div className="flex flex-col gap-4 pt-6">
+                  {[80, 55, 70].map((w, i) => (
+                    <div key={i} className={`shimmer h-5 rounded-lg ${i % 2 ? "self-end" : ""}`} style={{ width: `${w}%`, background: "var(--bg-sunken)" }} />
                   ))}
                 </div>
-                <div className="grid w-full max-w-2xl grid-cols-1 gap-2.5 sm:grid-cols-2">
-                  {SUGGESTIONS.map((s, i) => (
-                    <motion.button key={s.title} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.06 * i }} whileHover={{ y: -2 }} className="glass flex flex-col items-start gap-1.5 rounded-2xl p-4 text-left transition-shadow hover:shadow-lg" onClick={() => send(s.text)}>
-                      <span className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: "var(--accent)" }}>
-                        {s.icon} {s.title}
-                      </span>
-                      <span className="text-[13px] leading-snug" style={{ color: "var(--muted)" }}>
-                        {s.text}
-                      </span>
-                    </motion.button>
-                  ))}
-                </div>
-              </motion.div>
+              )}
+
+              {hidden > 0 && (
+                <button className="btn mx-auto h-8 text-xs" onClick={() => setShowAll(true)}>
+                  Show earlier messages ({hidden})
+                </button>
+              )}
+
+              {visible.map((m, i) => (
+                <MessageView key={m.id} msg={m} isLast={i === visible.length - 1} />
+              ))}
+              {canContinue && (
+                <button className="btn mx-auto h-8 text-xs" onClick={() => continueReply()}>
+                  Continue reply
+                </button>
+              )}
+              <div className="h-2" />
+            </div>
+          </div>
+
+          <AnimatePresence>
+            {!stuck && messages.length > 0 && (
+              <motion.button
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 8 }}
+                className="glass absolute bottom-[148px] left-1/2 z-20 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full"
+                onClick={() => {
+                  setStuck(true);
+                  scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
+                }}
+              >
+                <ArrowDown size={15} />
+              </motion.button>
             )}
           </AnimatePresence>
 
-          {sid && loading && messages.length === 0 && (
-            <div className="flex flex-col gap-4 pt-6">
-              {[80, 55, 70].map((w, i) => (
-                <div key={i} className={`shimmer h-5 rounded-lg ${i % 2 ? "self-end" : ""}`} style={{ width: `${w}%`, background: "var(--bg-sunken)" }} />
-              ))}
-            </div>
-          )}
-
-          {hidden > 0 && (
-            <button className="btn mx-auto h-8 text-xs" onClick={() => setShowAll(true)}>
-              Show earlier messages ({hidden})
-            </button>
-          )}
-
-          {visible.map((m, i) => (
-            <MessageView key={m.id} msg={m} isLast={i === visible.length - 1} />
-          ))}
-          {canContinue && (
-            <button className="btn mx-auto h-8 text-xs" onClick={() => continueReply()}>
-              Continue reply
-            </button>
-          )}
-          <div className="h-2" />
+          <Composer />
         </div>
+
+        {/* Right Column: Embedded Live Browser */}
+        <AnimatePresence>
+          {browserOpen && (
+            <motion.div
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: `${browserSplitRatio}%`, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 350, damping: 32 }}
+              className="relative z-10 h-full overflow-hidden"
+            >
+              <EmbeddedBrowser onClose={() => setBrowserOpen(false)} isSplit={true} />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
-
-      <AnimatePresence>
-        {!stuck && messages.length > 0 && (
-          <motion.button
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 8 }}
-            className="glass absolute bottom-[148px] left-1/2 z-20 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full"
-            onClick={() => {
-              setStuck(true);
-              scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
-            }}
-          >
-            <ArrowDown size={15} />
-          </motion.button>
-        )}
-      </AnimatePresence>
-
-      <Composer />
     </section>
   );
 }

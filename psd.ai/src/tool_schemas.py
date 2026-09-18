@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 _REQUIRED_NATIVE_TOOL_ARGS = {
     "web_search": ("query", "queries"),
     "web_fetch": ("url",),
+    "browser_navigate": ("url", "target"),
+    "browser_search": ("query", "q"),
+    "browser_click": ("target", "selector", "link"),
+    "browser_type": ("text", "value"),
     "read_file": ("path",),
     "write_file": ("path",),
     "edit_file": ("path",),
@@ -92,6 +96,101 @@ FUNCTION_TOOL_SCHEMAS = [
                 "properties": {
                     "monitor": {"type": "integer", "description": "Monitor index, 0 = primary/all screens"}
                 }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_navigate",
+            "description": "Navigate the embedded live browser to any URL. The page is loaded and displayed live inside the user's embedded browser GUI, where the user can see your actions in real time.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "The URL or website address to navigate to in the embedded browser (e.g. 'https://github.com')"}
+                },
+                "required": ["url"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_search",
+            "description": "Search the web using your choice of search engine (Google, DuckDuckGo, Bing, Brave, Ecosia, SearXNG, Yahoo, etc.). Navigates the embedded browser to the search results and shows the live page in the embedded GUI. You have full freedom to choose whichever search engine you prefer.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The search terms or question to look up"},
+                    "engine": {
+                        "type": "string",
+                        "description": "Search engine of your choice (e.g. 'duckduckgo', 'google', 'bing', 'brave', 'ecosia', 'searxng', 'yahoo'). Model's choice!"
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_click",
+            "description": "Click a link, button, or interactive element on the current page in the embedded live browser.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string", "description": "Element text, link text, button name, or CSS selector to click"}
+                },
+                "required": ["target"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_type",
+            "description": "Type text into a field or input in the embedded live browser.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Text to enter into the field"},
+                    "field": {"type": "string", "description": "Name, placeholder, or label of the input field (default: 'search')"},
+                    "submit": {"type": "boolean", "description": "Whether to submit the form after typing"}
+                },
+                "required": ["text"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_snapshot",
+            "description": "Capture a live snapshot of the current page in the embedded browser (returns title, URL, readable content, and clickable links).",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_back",
+            "description": "Navigate backward in embedded live browser history.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_forward",
+            "description": "Navigate forward in embedded live browser history.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
             }
         }
     },

@@ -71,6 +71,13 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "python": "Execute Python code for computation, data processing, math, scripting, and parsing. Not for writing code for the user. Prefer a dedicated tool for reading, writing, or searching files; use python only for what no dedicated tool covers. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.",
     "web_search": "Quick single web lookup for a fact, current event, latest/current information, or doc mid-task. Use this instead of bash/curl/python/requests for web searches. NOT for 'research X' / 'do research on X' requests — those are deep-research jobs (use trigger_research). web_search = one query; trigger_research = a full researched report in the sidebar.",
     "web_fetch": "Fetch and read the text content of a specific URL/website the user names (e.g. 'check example.com', 'open this link'). Use when you have a concrete URL; for open-ended lookups use web_search instead.",
+    "browser_navigate": "Navigate the embedded live browser to any URL. The user sees the page rendered live inside their GUI window. Use for browsing websites, documentation, and web tools.",
+    "browser_search": "Search the web using your choice of search engine (Google, DuckDuckGo, Bing, Brave, Ecosia, SearXNG, Yahoo, etc.). Navigates the embedded browser and shows the live page in the GUI. You (the model) have full freedom to choose whichever search engine you prefer.",
+    "browser_click": "Click a link, button, or element in the embedded live browser. Triggers navigation when clicking links.",
+    "browser_type": "Type into an input or search field in the embedded live browser.",
+    "browser_snapshot": "Inspect the current page in the embedded live browser. Returns page text, title, URL, and clickable links.",
+    "browser_back": "Navigate back in embedded live browser history.",
+    "browser_forward": "Navigate forward in embedded live browser history.",
     "read_file": "Read a file from disk and return its contents. View source code, config files, logs. Supports an optional line range (offset/limit) for large files.",
     "grep": "Search file CONTENTS for a regex across a directory tree (ripgrep-backed, honours .gitignore). Returns file:line:match. Use to find where code/symbols/strings live — prefer over bash grep.",
     "glob": "Find FILES by glob pattern (e.g. '**/*.py'), newest first. Use to locate files by name/extension — prefer over bash find/ls.",
@@ -418,7 +425,12 @@ class ToolIndex:
                    "find info", "find information", "online about",
                    "on the internet", "google", "latest", "current", "news",
                    "weather", "forecast", "stock price", "price of"}):
-            {"web_search", "web_fetch"},
+            {"web_search", "web_fetch", "browser_search", "browser_navigate"},
+        # Embedded browser intent
+        frozenset({"browser", "browse", "open browser", "browser search", "open website",
+                   "navigate to", "open page", "click on", "fill form", "search engine",
+                   "duckduckgo", "bing", "brave", "google search", "web page", "live browser"}):
+            {"browser_navigate", "browser_search", "browser_click", "browser_type", "browser_snapshot", "browser_back"},
         frozenset({"research", "reserach", "reasearch", "look into", "investigate",
                    "deep dive", "deep research", "find out about", "study up on",
                    "report on", "do research", "look up everything"}):
@@ -558,7 +570,7 @@ class ToolIndex:
         # stubbed/unavailable. Keep this structural, not always-on, so trivial
         # prompts do not drag web schemas into the agent context.
         if self._WEB_RE.search(query):
-            base.update({"web_search", "web_fetch"})
+            base.update({"web_search", "web_fetch", "browser_search", "browser_navigate"})
         # Hard steering: when the query is a clear "save info about a specific
         # person" pattern (address paste + name, phone next to a name, etc.),
         # the model has been observed defaulting to manage_memory even with

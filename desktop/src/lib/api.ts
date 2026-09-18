@@ -751,3 +751,49 @@ export function sendChat(o: ChatSendOptions, h: ChatStreamHandlers): StreamHandl
     },
   );
 }
+
+export interface BrowserEngineInfo {
+  name: string;
+  search_url: string;
+  html_url: string;
+  color: string;
+  icon: string;
+}
+
+export interface BrowserActionLog {
+  id: string;
+  timestamp: string;
+  action: string;
+  target: string;
+  outcome: string;
+  engine: string;
+  url: string;
+  details?: Record<string, any>;
+}
+
+export interface BrowserState {
+  url: string;
+  title: string;
+  engine: string;
+  engine_info?: BrowserEngineInfo;
+  status: string;
+  status_message: string;
+  can_back: boolean;
+  can_forward: boolean;
+  history: { url: string; title: string; time?: string }[];
+  action_logs: BrowserActionLog[];
+  element_count?: number;
+}
+
+export const browser = {
+  getState: () => get<BrowserState>("/api/browser/state"),
+  getEngines: () => get<{ engines: BrowserEngineInfo[]; keys: string[]; default: string }>("/api/browser/engines"),
+  navigate: (url: string, engine?: string) => postJson<{ status: string; state: BrowserState }>("/api/browser/navigate", { url, engine }),
+  search: (query: string, engine?: string) => postJson<{ status: string; state: BrowserState }>("/api/browser/search", { query, engine }),
+  click: (target: string) => postJson<{ status: string; state: BrowserState }>("/api/browser/click", { target }),
+  typeText: (field: string, text: string, submit = false) => postJson<{ status: string; state: BrowserState }>("/api/browser/type", { field, text, submit }),
+  back: () => postJson<{ status: string; state: BrowserState }>("/api/browser/back", {}),
+  forward: () => postJson<{ status: string; state: BrowserState }>("/api/browser/forward", {}),
+  reload: () => postJson<{ status: string; state: BrowserState }>("/api/browser/reload", {}),
+};
+

@@ -6,9 +6,11 @@ import {
   models as modelsApi,
   sendChat,
   misc,
+  browser as browserApi,
   type AuthStatus,
   type Session,
   type ModelItem,
+  type BrowserActionLog,
 } from "../lib/api";
 import type { StreamHandle } from "../lib/ipc";
 import { onUnauthorized } from "../lib/ipc";
@@ -17,6 +19,7 @@ import { applyDensity, applyFontScale, applyTheme, urlsMatch } from "../lib/ui";
 export type Screen = "boot" | "setup" | "login" | "app";
 export type AppView =
   | "chat"
+  | "browser"
   | "talk"
   | "models"
   | "notes"
@@ -31,7 +34,7 @@ export type AppView =
 export type Density = "comfortable" | "compact";
 
 const VIEWS: AppView[] = [
-  "chat", "talk", "models", "notes", "tasks", "calendar", "memory",
+  "chat", "browser", "talk", "models", "notes", "tasks", "calendar", "memory",
   "gallery", "library", "research", "compare", "email",
 ];
 
@@ -114,6 +117,30 @@ interface AppState {
   toasts: Toast[];
   contextLimit: number | null;
   libraryDirty: boolean;
+
+  // Embedded Browser State
+  browserOpen: boolean;
+  browserUrl: string;
+  browserTitle: string;
+  browserEngine: string;
+  browserStatus: string;
+  browserStatusMessage: string;
+  browserLogs: BrowserActionLog[];
+  browserCanBack: boolean;
+  browserCanForward: boolean;
+  browserSplitRatio: number;
+  browserRefreshTick: number;
+
+  setBrowserOpen: (v: boolean) => void;
+  toggleBrowser: () => void;
+  setBrowserSplitRatio: (ratio: number) => void;
+  loadBrowserState: () => Promise<void>;
+  navigateBrowser: (url: string, engine?: string) => Promise<void>;
+  searchBrowser: (query: string, engine?: string) => Promise<void>;
+  clickBrowser: (target: string) => Promise<void>;
+  browserBack: () => Promise<void>;
+  browserForward: () => Promise<void>;
+  browserReload: () => Promise<void>;
 
   boot: () => Promise<void>;
   refreshAuth: () => Promise<AuthStatus>;
@@ -263,6 +290,150 @@ export const useApp = create<AppState>((set, getState) => ({
   toasts: [],
   contextLimit: null,
   libraryDirty: false,
+
+  // Embedded Browser initial state
+  browserOpen: false,
+  browserUrl: "about:home",
+  browserTitle: "Embedded Browser",
+  browserEngine: "duckduckgo",
+  browserStatus: "idle",
+  browserStatusMessage: "Ready",
+  browserLogs: [],
+  browserCanBack: false,
+  browserCanForward: false,
+  browserSplitRatio: 50,
+  browserRefreshTick: 0,
+
+  setBrowserOpen: (v) => set({ browserOpen: v }),
+  toggleBrowser: () => set((s) => ({ browserOpen: !s.browserOpen })),
+  setBrowserSplitRatio: (ratio) => set({ browserSplitRatio: Math.max(25, Math.min(75, ratio)) }),
+
+  loadBrowserState: async () => {
+    try {
+      const st = await browserApi.getState();
+      set((s) => ({
+        browserUrl: st.url || s.browserUrl,
+        browserTitle: st.title || s.browserTitle,
+        browserEngine: st.engine || s.browserEngine,
+        browserStatus: st.status || s.browserStatus,
+        browserStatusMessage: st.status_message || s.browserStatusMessage,
+        browserCanBack: st.can_back,
+        browserCanForward: st.can_forward,
+        browserLogs: st.action_logs || s.browserLogs,
+      }));
+    } catch {
+      /* ignore */
+    }
+  },
+
+  navigateBrowser: async (url, engine) => {
+    set({ browserStatus: "navigating", browserStatusMessage: `Navigating to ${url}...` });
+    try {
+      const res = await browserApi.navigate(url, engine);
+      if (res?.state) {
+        set((s) => ({
+          browserUrl: res.state.url,
+          browserTitle: res.state.title,
+          browserEngine: res.state.engine,
+          browserStatus: res.state.status,
+          browserStatusMessage: res.state.status_message,
+          browserCanBack: res.state.can_back,
+          browserCanForward: res.state.can_forward,
+          browserLogs: res.state.action_logs,
+          browserRefreshTick: s.browserRefreshTick + 1,
+        }));
+      }
+    } catch (e: any) {
+      set({ browserStatus: "error", browserStatusMessage: e?.message || "Navigation failed" });
+    }
+  },
+
+  searchBrowser: async (query, engine) => {
+    set({ browserStatus: "searching", browserStatusMessage: `Searching on ${engine || "engine"}...` });
+    try {
+      const res = await browserApi.search(query, engine);
+      if (res?.state) {
+        set((s) => ({
+          browserUrl: res.state.url,
+          browserTitle: res.state.title,
+          browserEngine: res.state.engine,
+          browserStatus: res.state.status,
+          browserStatusMessage: res.state.status_message,
+          browserCanBack: res.state.can_back,
+          browserCanForward: res.state.can_forward,
+          browserLogs: res.state.action_logs,
+          browserRefreshTick: s.browserRefreshTick + 1,
+        }));
+      }
+    } catch (e: any) {
+      set({ browserStatus: "error", browserStatusMessage: e?.message || "Search failed" });
+    }
+  },
+
+  clickBrowser: async (target) => {
+    set({ browserStatus: "clicking", browserStatusMessage: `Clicking ${target}...` });
+    try {
+      const res = await browserApi.click(target);
+      if (res?.state) {
+        set((s) => ({
+          browserUrl: res.state.url,
+          browserTitle: res.state.title,
+          browserEngine: res.state.engine,
+          browserStatus: res.state.status,
+          browserStatusMessage: res.state.status_message,
+          browserCanBack: res.state.can_back,
+          browserCanForward: res.state.can_forward,
+          browserLogs: res.state.action_logs,
+          browserRefreshTick: s.browserRefreshTick + 1,
+        }));
+      }
+    } catch (e: any) {
+      set({ browserStatus: "error", browserStatusMessage: e?.message || "Click failed" });
+    }
+  },
+
+  browserBack: async () => {
+    try {
+      const res = await browserApi.back();
+      if (res?.state) {
+        set((s) => ({
+          browserUrl: res.state.url,
+          browserTitle: res.state.title,
+          browserCanBack: res.state.can_back,
+          browserCanForward: res.state.can_forward,
+          browserRefreshTick: s.browserRefreshTick + 1,
+        }));
+      }
+    } catch {
+      /* ignore */
+    }
+  },
+
+  browserForward: async () => {
+    try {
+      const res = await browserApi.forward();
+      if (res?.state) {
+        set((s) => ({
+          browserUrl: res.state.url,
+          browserTitle: res.state.title,
+          browserCanBack: res.state.can_back,
+          browserCanForward: res.state.can_forward,
+          browserRefreshTick: s.browserRefreshTick + 1,
+        }));
+      }
+    } catch {
+      /* ignore */
+    }
+  },
+
+  browserReload: async () => {
+    try {
+      await browserApi.reload();
+      set((s) => ({ browserRefreshTick: s.browserRefreshTick + 1 }));
+    } catch {
+      /* ignore */
+    }
+  },
 
   toast: (text, kind = "info", sticky = false) => {
     const id = ++toastSeq;
@@ -696,6 +867,33 @@ export const useApp = create<AppState>((set, getState) => ({
               break;
             case "tool_start":
               patch((m) => (m.tools = [...(m.tools || []), { id: mid(), tool: ev.tool, command: ev.full_command || ev.command, running: true }]));
+              if (ev.tool?.startsWith("browser_") || ev.tool?.includes("builtin_browser") || ev.tool === "web_search") {
+                set({ browserOpen: true, browserStatus: "busy", browserStatusMessage: `Running ${ev.tool}...` });
+              }
+              break;
+            case "browser_action":
+            case "browser_state":
+              if (ev.browser_state) {
+                const bs = ev.browser_state;
+                set((s) => ({
+                  browserOpen: true,
+                  browserUrl: bs.url || s.browserUrl,
+                  browserTitle: bs.title || s.browserTitle,
+                  browserEngine: bs.engine || s.browserEngine,
+                  browserStatus: bs.status || s.browserStatus,
+                  browserStatusMessage: bs.status_message || s.browserStatusMessage,
+                  browserCanBack: bs.can_back ?? s.browserCanBack,
+                  browserCanForward: bs.can_forward ?? s.browserCanForward,
+                  browserLogs: bs.action_logs || s.browserLogs,
+                  browserRefreshTick: s.browserRefreshTick + 1,
+                }));
+              } else if (ev.browser_url) {
+                set((s) => ({
+                  browserOpen: true,
+                  browserUrl: ev.browser_url,
+                  browserRefreshTick: s.browserRefreshTick + 1,
+                }));
+              }
               break;
             case "tool_progress":
               patch((m) => {

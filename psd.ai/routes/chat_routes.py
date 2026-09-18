@@ -303,6 +303,13 @@ _RECENT_BROWSER_CONTEXT_RE = re.compile(
     re.I,
 )
 _BROWSER_MCP_TOOLS = {
+    "browser_navigate",
+    "browser_search",
+    "browser_click",
+    "browser_type",
+    "browser_snapshot",
+    "browser_back",
+    "browser_forward",
     "mcp__builtin_browser__browser_navigate",
     "mcp__builtin_browser__browser_snapshot",
     "mcp__builtin_browser__browser_click",

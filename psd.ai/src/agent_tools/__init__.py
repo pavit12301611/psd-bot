@@ -29,6 +29,15 @@ from .model_interaction_tools import ChatWithModelTool, AskTeacherTool, ListMode
 from .bg_job_tools import ManageBgJobsTool
 from .session_tools import CreateSessionTool, ListSessionsTool, SendToSessionTool, ManageSessionTool
 from .computer_tools import ComputerControlTool, ComputerScreenTool
+from .browser_tools import (
+    BrowserNavigateTool,
+    BrowserSearchTool,
+    BrowserClickTool,
+    BrowserTypeTool,
+    BrowserSnapshotTool,
+    BrowserBackTool,
+    BrowserForwardTool,
+)
 from .admin_tools import (
     ADMIN_TOOL_HANDLERS,
     do_manage_endpoints, do_manage_mcp, do_manage_webhooks,
@@ -69,6 +78,20 @@ TOOL_HANDLERS = {
     "manage_session": ManageSessionTool().execute,
     "computer_control": ComputerControlTool().execute,
     "computer_screen": ComputerScreenTool().execute,
+    "browser_navigate": BrowserNavigateTool().execute,
+    "browser_search": BrowserSearchTool().execute,
+    "browser_click": BrowserClickTool().execute,
+    "browser_type": BrowserTypeTool().execute,
+    "browser_snapshot": BrowserSnapshotTool().execute,
+    "browser_back": BrowserBackTool().execute,
+    "browser_forward": BrowserForwardTool().execute,
+    # Direct MCP aliases so fallback works seamlessly
+    "mcp__builtin_browser__browser_navigate": BrowserNavigateTool().execute,
+    "mcp__builtin_browser__browser_snapshot": BrowserSnapshotTool().execute,
+    "mcp__builtin_browser__browser_click": BrowserClickTool().execute,
+    "mcp__builtin_browser__browser_type": BrowserTypeTool().execute,
+    "mcp__builtin_browser__browser_navigate_back": BrowserBackTool().execute,
+    "mcp__builtin_browser__browser_take_screenshot": BrowserSnapshotTool().execute,
 }
 # Config/integration admin tools (manage_endpoints/mcp/webhooks/tokens/settings).
 TOOL_HANDLERS.update(ADMIN_TOOL_HANDLERS)
@@ -95,6 +118,8 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              "manage_tasks", "api_call", "ask_teacher", "manage_skills",
              "suggest_document",
              "computer_control", "computer_screen",
+             "browser_navigate", "browser_search", "browser_click", "browser_type",
+             "browser_snapshot", "browser_back", "browser_forward",
              "manage_endpoints", "manage_mcp", "manage_webhooks",
              "manage_tokens", "manage_documents", "manage_settings",
              "manage_notes", "manage_calendar",
