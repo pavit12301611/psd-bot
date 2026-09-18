@@ -537,6 +537,9 @@ logger = logging.getLogger(__name__)
 
 
 _ADMIN_TOOLS = {
+    # Driving the owner's desktop is owner-only, same as server config.
+    "computer_control",
+    "computer_screen",
     "app_api",
     "manage_endpoints",
     "manage_mcp",

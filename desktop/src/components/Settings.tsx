@@ -1,13 +1,22 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { X, Server, KeyRound, Info, Plus, Trash2, RefreshCw, TerminalSquare, Search, Keyboard, HardDrive, Mail, Type } from "lucide-react";
+import { X, Server, KeyRound, Info, Plus, Trash2, RefreshCw, TerminalSquare, Search, Keyboard, HardDrive, Mail, Type, Mic, MonitorPlay, ShieldAlert, Volume2 } from "lucide-react";
 import { useApp } from "../store/app";
-import { auth, endpoints as epApi, search as searchApi, email as emailApi, type Endpoint } from "../lib/api";
+import {
+  auth,
+  endpoints as epApi,
+  search as searchApi,
+  email as emailApi,
+  settings as settingsApi,
+  jarvis as jarvisApi,
+  type Endpoint,
+  type JarvisStatus,
+} from "../lib/api";
 import { backendStatus, inTauri, restartBackend } from "../lib/ipc";
 import Overlay from "./Overlay";
 import { THEMES } from "../lib/ui";
 
-type Tab = "models" | "search" | "account" | "appearance" | "email" | "engine" | "about";
+type Tab = "models" | "voice" | "search" | "account" | "appearance" | "email" | "engine" | "about";
 
 export default function Settings() {
   const open = useApp((s) => s.settingsOpen);
@@ -18,6 +27,7 @@ export default function Settings() {
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: "models", label: "Models", icon: <Server size={15} /> },
+    { id: "voice", label: "Voice & PC", icon: <Mic size={15} /> },
     { id: "search", label: "Search", icon: <Search size={15} /> },
     { id: "account", label: "Account", icon: <KeyRound size={15} /> },
     { id: "appearance", label: "Appearance", icon: <Type size={15} /> },
@@ -46,6 +56,7 @@ export default function Settings() {
               </button>
               <div className="flex-1 overflow-y-auto p-6">
                 {tab === "models" && <ModelsTab isAdmin={!!isAdmin} />}
+                {tab === "voice" && <VoiceTab isAdmin={!!isAdmin} />}
                 {tab === "search" && <SearchTab />}
                 {tab === "account" && <AccountTab />}
                 {tab === "appearance" && <AppearanceTab />}
@@ -421,5 +432,210 @@ function AboutTab() {
         <Keyboard size={15} /> Keyboard shortcuts
       </button>
     </Section>
+  );
+}
+
+
+function Toggle({ on, onChange, label, desc }: { on: boolean; onChange: (v: boolean) => void; label: string; desc?: string }) {
+  return (
+    <button
+      className="flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition-colors"
+      style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}
+      onClick={() => onChange(!on)}
+      role="switch"
+      aria-checked={on}
+    >
+      <span
+        className="mt-0.5 flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors"
+        style={{ background: on ? "var(--accent)" : "var(--border)" }}
+      >
+        <motion.span layout className="h-4 w-4 rounded-full bg-white" style={{ marginLeft: on ? 16 : 0 }} />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-[13px] font-medium">{label}</span>
+        {desc && (
+          <span className="block text-[12px]" style={{ color: "var(--muted)" }}>
+            {desc}
+          </span>
+        )}
+      </span>
+    </button>
+  );
+}
+
+function VoiceTab({ isAdmin }: { isAdmin: boolean }) {
+  const toast = useApp((s) => s.toast);
+  const [status, setStatus] = useState<JarvisStatus | null>(null);
+  const [saved, setSaved] = useState<Record<string, any> | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const [s, cfg] = await Promise.all([
+      jarvisApi.status().catch(() => null),
+      settingsApi.get().catch(() => null),
+    ]);
+    setStatus(s);
+    setSaved(cfg);
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const put = async (patch: Record<string, any>) => {
+    if (!isAdmin) {
+      toast("Only an admin can change these settings", "error");
+      return;
+    }
+    setBusy(true);
+    try {
+      setSaved(await settingsApi.update(patch));
+      await load();
+    } catch (e: any) {
+      toast(e?.message || "Could not save", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const val = (key: string, fallback: any) => (saved && key in saved ? saved[key] : fallback);
+  const autonomy = String(val("jarvis_autonomy", "full"));
+  const jarvisOn = val("jarvis_enabled", true) !== false;
+  const pcOn = val("computer_control_enabled", true) !== false;
+  const confirmRisky = val("computer_control_confirm", false) === true;
+  const missing = status?.computer?.missing_packages || [];
+
+  const testVoice = () => {
+    try {
+      if (!window.speechSynthesis) throw new Error("This browser has no speech synthesis");
+      const u = new SpeechSynthesisUtterance("Voice mode is online, sir. I will always answer in English.");
+      u.lang = "en-US";
+      u.rate = 1.03;
+      window.speechSynthesis.speak(u);
+    } catch (e: any) {
+      toast(e?.message || "Speech synthesis unavailable", "error");
+    }
+  };
+
+  return (
+    <>
+      <Section
+        title="Talk to psd.ai"
+        desc="Voice mode listens in any language and always answers in English, out loud. Open it from the mic icon in the left rail or with the shortcut."
+      >
+        <div className="mb-3 flex flex-wrap gap-1.5 text-[12px]">
+          <span className="pill" data-on={jarvisOn}>
+            <Mic size={12} /> Voice {jarvisOn ? "on" : "off"}
+          </span>
+          <span className="pill" data-on={!!status?.stt?.available}>
+            <Volume2 size={12} /> STT: {status?.stt?.provider || "browser"}
+          </span>
+          <span className="pill" data-on={!!status?.tts?.available}>
+            TTS: {status?.tts?.provider || "browser"}
+          </span>
+          <span className="pill" data-on={!!status?.llm_configured}>
+            Model: {status?.model || "none yet"}
+          </span>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <Toggle
+            on={jarvisOn}
+            onChange={(v) => void put({ jarvis_enabled: v })}
+            label="Voice mode"
+            desc="Turns the Talk screen and the /api/jarvis endpoints on or off."
+          />
+
+          <div>
+            <div className="mb-1.5 text-[13px] font-medium">Autonomy</div>
+            <div className="flex gap-1.5">
+              {[
+                { id: "full", label: "Full control", desc: "Act on my PC without asking" },
+                { id: "confirm", label: "Ask first", desc: "Confirm before risky actions" },
+                { id: "off", label: "Chat only", desc: "Never touch the machine" },
+              ].map((opt) => (
+                <button
+                  key={opt.id}
+                  className="pill flex-1 justify-center"
+                  data-on={autonomy === opt.id}
+                  title={opt.desc}
+                  disabled={busy}
+                  onClick={() => void put({ jarvis_autonomy: opt.id })}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl px-3 py-2.5 text-[12px]" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
+            Replies are pinned to <b>English</b>. You can speak to psd.ai in Hindi, Hinglish or anything else — it always
+            answers in English.
+          </div>
+
+          <button className="btn" onClick={testVoice}>
+            <Volume2 size={14} /> Test the voice
+          </button>
+        </div>
+      </Section>
+
+      <Section
+        title="PC control"
+        desc="Mouse, keyboard, windows, clipboard, volume and processes — the same actions the voice agent uses are also available to the agent in chat."
+      >
+        <div className="mb-3 flex flex-wrap gap-1.5 text-[12px]">
+          <span className="pill" data-on={pcOn}>
+            <MonitorPlay size={12} /> {pcOn ? "Enabled" : "Disabled"}
+          </span>
+          <span className="pill" data-on={!!status?.computer?.supports_input}>
+            Input {status?.computer?.supports_input ? "ready" : "unavailable"}
+          </span>
+          <span className="pill" data-on={!!status?.computer?.supports_screenshot}>
+            Screenshot {status?.computer?.supports_screenshot ? "ready" : "unavailable"}
+          </span>
+          {status?.computer?.os && <span className="pill">{status.computer.os}</span>}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <Toggle
+            on={pcOn}
+            onChange={(v) => void put({ computer_control_enabled: v })}
+            label="Let psd.ai drive this computer"
+            desc="Off means every mouse, keyboard and window action is refused."
+          />
+          <Toggle
+            on={confirmRisky}
+            onChange={(v) => void put({ computer_control_confirm: v })}
+            label="Ask before risky actions"
+            desc="Prompts for approval before ending a process. Formatting, wiping and system files are always refused, whatever this says."
+          />
+        </div>
+
+        {missing.length > 0 && (
+          <div className="mt-3 rounded-xl p-3 text-[12px]" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+            <div className="mb-1 font-medium">Optional packages not installed: {missing.join(", ")}</div>
+            <p className="mb-2" style={{ color: "var(--muted)" }}>
+              psd.ai still works without them using built-in fallbacks, but installing them makes screenshots, window
+              control and process management better:
+            </p>
+            <pre
+              className="selectable overflow-x-auto rounded-lg p-2 text-[11px]"
+              style={{ background: "var(--code-bg)", color: "#c9cee0", fontFamily: "var(--font-mono)" }}
+            >
+              .\venv\Scripts\pip install -r requirements-jarvis.txt
+            </pre>
+          </div>
+        )}
+
+        <div className="mt-3 flex items-start gap-2 rounded-xl px-3 py-2 text-[12px]" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+          <ShieldAlert size={14} className="mt-0.5 shrink-0" />
+          <span style={{ color: "var(--muted)" }}>
+            Hard limits, always on: no disk formatting, no system-file deletion, no boot-config changes, no shutting the
+            PC down, and psd.ai can never end its own process or the desktop shell. Everything else it does is logged in
+            the Talk screen.
+          </span>
+        </div>
+      </Section>
+    </>
   );
 }

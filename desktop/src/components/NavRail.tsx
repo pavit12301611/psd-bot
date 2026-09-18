@@ -10,6 +10,7 @@ import {
   Telescope,
   Columns2,
   Mail,
+  Mic,
   Settings,
   Plus,
   Search,
@@ -19,6 +20,7 @@ import { useApp, type AppView } from "../store/app";
 
 const ITEMS: { id: AppView; icon: typeof MessageSquare; label: string; hint?: string }[] = [
   { id: "chat", icon: MessageSquare, label: "Chat" },
+  { id: "talk", icon: Mic, label: "Talk to psd.ai" },
   { id: "models", icon: HardDrive, label: "Models" },
   { id: "notes", icon: StickyNote, label: "Notes" },
   { id: "tasks", icon: ListTodo, label: "Tasks" },

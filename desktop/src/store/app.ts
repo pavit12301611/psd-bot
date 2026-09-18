@@ -17,6 +17,7 @@ import { applyDensity, applyFontScale, applyTheme, urlsMatch } from "../lib/ui";
 export type Screen = "boot" | "setup" | "login" | "app";
 export type AppView =
   | "chat"
+  | "talk"
   | "models"
   | "notes"
   | "tasks"
@@ -30,7 +31,7 @@ export type AppView =
 export type Density = "comfortable" | "compact";
 
 const VIEWS: AppView[] = [
-  "chat", "models", "notes", "tasks", "calendar", "memory",
+  "chat", "talk", "models", "notes", "tasks", "calendar", "memory",
   "gallery", "library", "research", "compare", "email",
 ];
 

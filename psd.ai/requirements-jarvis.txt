@@ -1,0 +1,38 @@
+# Jarvis extras — voice ("Talk to psd.ai") + desktop/computer control.
+#
+# Installed by run.bat on the first launch (or manually with:
+#     pip install -r requirements-jarvis.txt
+#
+# Everything here is OPTIONAL in code: psd.ai degrades to a dependency-free
+# fallback (ctypes on Windows, osascript on macOS, xdotool on Linux) when a
+# package is missing, and the voice agent still works with browser speech
+# synthesis. These packages simply make it smoother and more capable.
+
+# ── Voice: microphone -> text ──────────────────────────────────────────────
+# faster-whisper runs the Whisper models locally through CTranslate2 — no
+# torch, no cloud, no audio leaving the PC. The model weights (~150 MB for
+# `base`) download on first use and are cached by Hugging Face Hub.
+# Add `torch` as well if you have a CUDA GPU and want GPU transcription.
+faster-whisper
+
+# ── Desktop control ────────────────────────────────────────────────────────
+# Mouse + keyboard driving with easing, and cross-platform fallbacks.
+pyautogui
+# Fast, multi-monitor screen capture (no OS dialogs, no clipboard side effects).
+mss
+# Clipboard read/write without shelling out to PowerShell or xclip.
+pyperclip
+# System stats (CPU/RAM/disk/battery) and process listing/killing for the
+# `info`, `processes` and `kill` actions.
+psutil
+# Window enumeration / focus / close. Windows + macOS only; Linux uses wmctrl.
+pygetwindow; sys_platform == "win32" or sys_platform == "darwin"
+# Exact master-volume control on Windows (without it, volume steps with real
+# volume-key presses, which still works).
+pycaw; sys_platform == "win32"
+comtypes; sys_platform == "win32"
+
+# ── Screen capture fallback ────────────────────────────────────────────────
+# Pillow is already a transitive dependency (qrcode[pil]) and is listed here
+# only so the screenshot fallback is explicit rather than incidental.
+Pillow

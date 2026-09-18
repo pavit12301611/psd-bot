@@ -7,16 +7,81 @@ psd.ai is a **desktop app**. There is no browser tab and no `localhost` URL to
 open — the app window starts the Python engine privately inside itself and
 talks to it over local IPC (see [`desktop/README.md`](desktop/README.md)).
 
+## Talk to psd.ai (voice + PC control)
+
+psd.ai ships a **Jarvis-style voice mode**. Open it with **Ctrl+Shift+T**, from
+the microphone button in the left rail, or from the command palette.
+
+* **Speak in any language — it always answers in English, out loud.** Hindi,
+  Hinglish, anything: the reply is pinned to English and written for a
+  text-to-speech engine (no markdown, no emoji, no bullet lists).
+* **It actually does the work.** "open notepad", "turn the volume up",
+  "press ctrl+s", "type hello", "what's my battery", "close chrome" — the
+  request is understood, executed on your desktop, and reported back in one
+  short sentence.
+* **Hold Space** (push to talk) or switch on **Continuous** for a hands-free
+  back-and-forth. Silence ends the turn.
+* Voice → text happens locally with **faster-whisper** when it's installed; the
+  browser's speech API is the fallback. Replies use the engine's TTS when you
+  configure one, otherwise the browser speaks them.
+
+The same PC control is available in typed chat: the agent gets
+`computer_control` / `computer_screen` tools, so "open the calculator and type
+1234" works without saying a word.
+
+### What it can do on your PC
+
+| Group | Actions |
+| --- | --- |
+| See | `screenshot`, `screen_size`, `windows`, `info` (CPU/RAM/disk/battery), `processes`, `clipboard_get` |
+| Drive | `click`, `move`, `drag`, `scroll`, `type`, `key` (shortcuts like `ctrl+s`) |
+| Apps | `open` (app, file or URL), `focus`, `close_window`, `kill` |
+| System | `volume` (level / up / down / mute), `notify`, `clipboard_set`, `wait` |
+
+### Safety rails
+
+You asked for full access, so full access is the default — with a short list of
+things psd.ai will refuse **no matter what you say**:
+
+* no formatting or wiping a drive, no deleting system directories
+* no boot/firmware changes, no shutting the PC down
+* it can never end its own process, the desktop shell, or core Windows services
+
+Everything else runs. If you want a prompt before anything risky (ending a
+process), switch **Autonomy → Ask first** in **Settings → Voice & PC**. Turn
+**PC control** off there to refuse every mouse, keyboard and window action while
+keeping chat and voice intact.
+
 ## Run it on Windows
 
 Double-click **`run.bat`** — that's it. It will:
 
 1. find Python 3.11+
 2. create a virtual environment & install dependencies (first run only)
-3. run first-time setup (data folders, database, `.env`)
-4. **download and run a hardware-fit group of 3 to 5 local models** (first run only)
-5. **open the psd.ai desktop app** — on the very first launch it asks you to
+3. install the **Jarvis extras** — offline speech-to-text plus the PC-control
+   packages (`psd.ai/requirements-jarvis.txt`, first run only, warnings only
+   if it fails)
+4. run first-time setup (data folders, database, `.env`)
+5. **download and run a hardware-fit group of 3 to 5 local models** (first run only)
+6. **open the psd.ai desktop app** — on the very first launch it asks you to
    create your admin account right in the window
+
+### run.bat options
+
+| Command | What it does |
+| --- | --- |
+| `run.bat --help` | list the options |
+| `run.bat --doctor` | check this PC: Python, venv, microphone, disk space, built app, PC-control status |
+| `run.bat --repair` | delete the venv and reinstall everything from scratch |
+| `run.bat --update` | `git pull` then refresh dependencies |
+| `run.bat --rebuild` | throw away the built app and rebuild it |
+| `run.bat --no-voice` | skip the Jarvis extras |
+| `run.bat --no-models` | skip the local model group for this run |
+| `run.bat --no-app` | set everything up, then stop without opening the window |
+
+`run.bat` also keeps a timestamped log in **`logs/run.log`**, warns you when
+there isn't enough disk space for the model group, and retries a failed `pip`
+install once before giving up.
 
 `run.bat` uses a prebuilt app if one is present (`desktop\psd.ai.exe` or
 `desktop\src-tauri\target\release\psd-ai-desktop.exe`). Otherwise it **installs
@@ -94,6 +159,8 @@ not already chosen one, so an existing setup is never overwritten.
 | run `python scripts\local_llama.py --print` | show the hardware-fit group, no downloads |
 | run `python scripts\local_llama.py --model llama-3.2-3b` | prefer a model while filling the group |
 | run `python scripts\local_llama.py --single-model` | use the legacy one-model mode |
+| set `PSD_NO_LOCAL_STT=1` | skip the local Whisper download (voice input uses the browser) |
+| set `PSD_AI_COMPUTER_CONTROL=0` | refuse every mouse / keyboard / window action |
 
 If the download or the GPU start fails, psd.ai still opens — the failure is
 reported in that window and you can add a model under **Settings → Models**

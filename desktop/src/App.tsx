@@ -7,6 +7,7 @@ import Boot from "./components/Boot";
 import Auth from "./components/Auth";
 import Sidebar from "./components/Sidebar";
 import Chat from "./components/Chat";
+import Talk from "./components/Talk";
 import Settings from "./components/Settings";
 import NavRail from "./components/NavRail";
 import CommandPalette from "./components/CommandPalette";
@@ -151,6 +152,11 @@ export default function App() {
         st.toggleWeb();
         return;
       }
+      if (meta && e.shiftKey && e.key.toLowerCase() === "t") {
+        e.preventDefault();
+        st.setView(st.view === "talk" ? "chat" : "talk");
+        return;
+      }
       if (e.key === "Escape") {
         if (st.shortcutsOpen) return st.setShortcuts(false);
         if (st.paletteOpen) return st.setPalette(false);
@@ -240,6 +246,8 @@ function Workspace() {
 
 function Feature({ view }: { view: AppView }) {
   switch (view) {
+    case "talk":
+      return <Talk />;
     case "models":
       return <ModelsHub />;
     case "notes":
