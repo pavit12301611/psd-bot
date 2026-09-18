@@ -128,6 +128,7 @@ async def maybe_extract_skill(
     round_count: int,
     tool_count: int,
     owner: Optional[str] = None,
+    workload: str = "foreground",
 ):
     """Extract a skill if the agent run was complex enough."""
     if not model:
@@ -200,6 +201,7 @@ async def maybe_extract_skill(
             ],
             headers=headers,
             timeout=30,
+            workload=workload,
         )
         logger.debug(
             "[skill-extract] LLM returned in %.1fs (len=%d, head=%r)",

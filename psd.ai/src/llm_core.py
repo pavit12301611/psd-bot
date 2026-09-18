@@ -75,7 +75,10 @@ def _local_model_gate_enabled() -> bool:
 
 
 def _gate_workload(workload: Optional[str]) -> str:
-    return "background" if str(workload or "").lower() == "background" else "foreground"
+    value = str(workload or "").lower()
+    if value in {"background", "idle"}:
+        return value
+    return "foreground"
 
 
 @asynccontextmanager
@@ -97,22 +100,28 @@ async def _local_model_slot(target_url: str, model: str, workload: Optional[str]
     if kind == "foreground":
         _LOCAL_MODEL_WAITING_FOREGROUND += 1
         current = dict(_LOCAL_MODEL_CURRENT)
-        if current.get("workload") == "background":
+        if current.get("workload") in {"background", "idle"}:
             task = current.get("task")
             if isinstance(task, asyncio.Task) and not task.done():
                 logger.info(
-                    "[model-gate] cancelling background local model call for foreground request model=%s",
+                    "[model-gate] cancelling low-priority %s model call for foreground request model=%s",
+                    current.get("workload"),
                     model,
                 )
                 task.cancel()
     else:
-        # Background work should not jump in while the browser/chat is active
-        # or while a foreground request is waiting to acquire the local model.
+        # Ordinary background jobs respect the browser heartbeat. PSD idle
+        # learning intentionally does not: a heartbeat means the app is open,
+        # not that the user is actively chatting. Both workloads still yield
+        # to a request waiting for the local model or to an active stream.
         try:
-            from src.interactive_gate import has_foreground_activity
+            if kind == "idle":
+                from src.interactive_gate import has_active_foreground_work as _activity_check
+            else:
+                from src.interactive_gate import has_foreground_activity as _activity_check
         except Exception:
-            has_foreground_activity = lambda: False  # type: ignore
-        while _LOCAL_MODEL_WAITING_FOREGROUND > 0 or has_foreground_activity():
+            _activity_check = lambda: False  # type: ignore
+        while _LOCAL_MODEL_WAITING_FOREGROUND > 0 or _activity_check():
             await asyncio.sleep(0.25)
 
     acquired = False

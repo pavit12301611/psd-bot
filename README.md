@@ -104,13 +104,18 @@ moved there automatically.
 
 It measures your RAM, GPU and CPU, then selects the strongest group that can
 stay resident together. The group never has fewer than three models and never
-exceeds five:
+exceeds five. It prioritises the **PSD** coding profile: a hardware-fit
+Qwen2.5-Coder GGUF is served under the stable model id `psd`, so PSD appears
+beside the other local models and becomes the fresh-install default. The 7B,
+1.5B, and 0.5B variants are selected automatically; weights stay outside the
+project folder. PSD is the app's coding/tool/memory profile around those base
+weights, not a multi-gigabyte weight file committed to Git.
 
 | Your PC | Typical resident group |
 | --- | --- |
-| 4 GB RAM | 3 tiny models: SmolLM2 135M, Qwen 0.5B, and a lightweight SmolLM2/Qwen build |
-| 8 GB RAM | 4–5 models: Llama 3.2 3B plus Qwen, Llama 1B, and tiny fallbacks |
-| 16 GB RAM | 5 models: Llama 3.1 8B, Llama 3.2 3B, Qwen 1.5B, Llama 1B, and a tiny fallback |
+| 4 GB RAM | PSD Coder 0.5B plus three tiny fallbacks |
+| 8 GB RAM | PSD Coder 1.5B, PSD Coder 0.5B, Llama 3.2 3B and tiny fallbacks |
+| 16 GB RAM | PSD Coder 7B/1.5B plus Llama 3.2 3B and small fallbacks |
 | 32 GB + 8 GB GPU | Up to 5 models with GPU offload where the VRAM budget allows |
 | 64 GB + 24 GB GPU | Up to 5 models, including the largest model that fits |
 
@@ -157,10 +162,17 @@ not already chosen one, so an existing setup is never overwritten.
 | set `LLAMA_PORT=9090` | use 9090 as the first model port (the group uses the next ports too) |
 | set `PSD_AI_RUNTIME_DIR=D:\ai-models` | keep llama.cpp + model weights somewhere else (e.g. a bigger drive) |
 | run `python scripts\local_llama.py --print` | show the hardware-fit group, no downloads |
-| run `python scripts\local_llama.py --model llama-3.2-3b` | prefer a model while filling the group |
+| run `python scripts\local_llama.py --model psd` | explicitly prefer the PSD coding profile |
+| run `python scripts\local_llama.py --model llama-3.2-3b` | prefer another model while filling the group |
 | run `python scripts\local_llama.py --single-model` | use the legacy one-model mode |
 | set `PSD_NO_LOCAL_STT=1` | skip the local Whisper download (voice input uses the browser) |
 | set `PSD_AI_COMPUTER_CONTROL=0` | refuse every mouse / keyboard / window action |
+| set `PSD_AI_IDLE_LEARNING=0` | disable all background PSD learning/model work |
+
+**Settings → PSD** controls owner-scoped idle learning. After a quiet period
+PSD catches up on durable memory and reusable skills one completed conversation
+at a time. Automatic coding edits are a separate opt-in setting that requires
+an existing workspace; the normal coding agent remains available when you ask.
 
 If the download or the GPU start fails, psd.ai still opens — the failure is
 reported in that window and you can add a model under **Settings → Models**

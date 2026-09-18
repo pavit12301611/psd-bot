@@ -822,6 +822,18 @@ app.include_router(setup_task_routes(task_scheduler))
 from routes.assistant_routes import setup_assistant_routes
 app.include_router(setup_assistant_routes(task_scheduler))
 
+# PSD — local coding profile + bounded idle memory/skill learning.
+from src.psd_idle import PsdIdleLearner
+psd_idle_learner = PsdIdleLearner(
+    session_manager,
+    memory_manager,
+    memory_vector,
+    skills_manager,
+)
+app.state.psd_idle_learner = psd_idle_learner
+from routes.psd_routes import setup_psd_routes
+app.include_router(setup_psd_routes(psd_idle_learner))
+
 # Calendar (CalDAV)
 from routes.calendar_routes import setup_calendar_routes
 calendar_router = setup_calendar_routes(upload_handler=upload_handler)
@@ -1246,6 +1258,18 @@ async def _startup_event():
             "In-process task scheduler disabled (PSD_AI_INPROCESS_TASKS=0); "
             "drive task firing externally (e.g. cron)."
         )
+
+    # PSD's idle worker is deliberately independent from the scheduled-task
+    # runner: it only revisits completed conversations after a quiet period and
+    # processes one owner/session at a time. It is still retained in the same
+    # startup-task list so shutdown cancels it cleanly.
+    try:
+        _psd_idle_task = psd_idle_learner.start()
+        if _psd_idle_task is not None:
+            _startup_tasks.append(_psd_idle_task)
+    except Exception as _e:
+        logger.warning("Failed to start PSD idle learner: %s", _e)
+
     # Periodic null-owner sweep — re-runs the legacy-owner assignment hourly
     # so any data created while auth was disabled / localhost-bypassed gets
     # claimed by the admin instead of staying world-visible (M19).
@@ -1310,6 +1334,11 @@ async def _shutdown_event():
             await upload_cleanup_task
         except asyncio.CancelledError:
             pass
+    # Stop PSD idle learning before closing model/session dependencies.
+    try:
+        await psd_idle_learner.stop()
+    except Exception:
+        pass
     # Stop task scheduler (no-op if it never started under the gate)
     try:
         await task_scheduler.stop()

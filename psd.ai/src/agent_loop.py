@@ -54,6 +54,7 @@ from src.tool_approvals import (
     tool_approval_store,
 )
 from src.tool_utils import _truncate, get_mcp_manager
+from src.psd_model import PSD_AGENT_DIRECTIVE, is_psd_model
 from src.agent_tools import (
     parse_tool_blocks,
     strip_tool_blocks,
@@ -2350,6 +2351,12 @@ def _build_system_prompt(
         if not active_document:
             _cached_base_prompt = agent_prompt
             _cached_base_prompt_key = cache_key
+
+    # PSD is a stable local profile layered over a hardware-fit coding model.
+    # Keep the directive outside the cached generic prompt so switching between
+    # PSD and another route cannot leak one model's identity into the other.
+    if is_psd_model(model):
+        agent_prompt = PSD_AGENT_DIRECTIVE + "\n\n" + agent_prompt
 
     # Dynamic parts that change per request
     mcp_schemas = []

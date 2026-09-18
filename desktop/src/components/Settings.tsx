@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { X, Server, KeyRound, Info, Plus, Trash2, RefreshCw, TerminalSquare, Search, Keyboard, HardDrive, Mail, Type, Mic, MonitorPlay, ShieldAlert, Volume2 } from "lucide-react";
+import { X, Server, KeyRound, Info, Plus, Trash2, RefreshCw, TerminalSquare, Search, Keyboard, HardDrive, Mail, Type, Mic, MonitorPlay, ShieldAlert, Volume2, BrainCircuit, Sparkles } from "lucide-react";
 import { useApp } from "../store/app";
 import {
   auth,
@@ -8,6 +8,7 @@ import {
   search as searchApi,
   email as emailApi,
   settings as settingsApi,
+  psd as psdApi,
   jarvis as jarvisApi,
   type Endpoint,
   type JarvisStatus,
@@ -16,7 +17,7 @@ import { backendStatus, inTauri, restartBackend } from "../lib/ipc";
 import Overlay from "./Overlay";
 import { THEMES } from "../lib/ui";
 
-type Tab = "models" | "voice" | "search" | "account" | "appearance" | "email" | "engine" | "about";
+type Tab = "models" | "psd" | "voice" | "search" | "account" | "appearance" | "email" | "engine" | "about";
 
 export default function Settings() {
   const open = useApp((s) => s.settingsOpen);
@@ -27,6 +28,7 @@ export default function Settings() {
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: "models", label: "Models", icon: <Server size={15} /> },
+    { id: "psd", label: "PSD", icon: <BrainCircuit size={15} /> },
     { id: "voice", label: "Voice & PC", icon: <Mic size={15} /> },
     { id: "search", label: "Search", icon: <Search size={15} /> },
     { id: "account", label: "Account", icon: <KeyRound size={15} /> },
@@ -56,6 +58,7 @@ export default function Settings() {
               </button>
               <div className="flex-1 overflow-y-auto p-6">
                 {tab === "models" && <ModelsTab isAdmin={!!isAdmin} />}
+                {tab === "psd" && <PsdTab />}
                 {tab === "voice" && <VoiceTab isAdmin={!!isAdmin} />}
                 {tab === "search" && <SearchTab />}
                 {tab === "account" && <AccountTab />}
@@ -184,6 +187,148 @@ function ModelsTab({ isAdmin }: { isAdmin: boolean }) {
             <button className="btn" onClick={() => { refresh(); loadModels(true); }}>
               <RefreshCw size={15} /> Refresh
             </button>
+          </div>
+        </div>
+      </Section>
+    </>
+  );
+}
+
+function PsdTab() {
+  const toast = useApp((s) => s.toast);
+  const [status, setStatus] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  const [workspaceDraft, setWorkspaceDraft] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setStatus(await psdApi.status());
+    } catch (e: any) {
+      toast(e?.message || "Could not load PSD status", "error");
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    if (status?.idle?.workspace !== undefined) {
+      setWorkspaceDraft(status.idle.workspace || "");
+    }
+  }, [status?.idle?.workspace]);
+
+  const idle = status?.idle?.settings || {};
+  const workspaceValue = workspaceDraft ?? idle.idle_workspace ?? "";
+  const profile = status?.profile || {};
+  const save = async (patch: Record<string, any>) => {
+    setBusy(true);
+    try {
+      const next = await psdApi.update(patch);
+      setStatus((current: any) => current ? { ...current, idle: next } : current);
+    } catch (e: any) {
+      toast(e?.message || "Could not save PSD settings", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const learnNow = async () => {
+    setBusy(true);
+    try {
+      await psdApi.learnNow();
+      toast("PSD will learn from the next completed conversation", "success");
+      window.setTimeout(() => void load(), 800);
+    } catch (e: any) {
+      toast(e?.message || "Could not queue PSD learning", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Section
+        title="PSD — your local coding model"
+        desc="PSD is preloaded by the local model group when hardware allows it. It uses a hardware-fit Qwen Coder base behind a stable PSD identity, with psd.ai's tools, browser, PC control, memory and skills available."
+      >
+        <div className="mb-3 flex flex-wrap gap-1.5 text-[12px]">
+          <span className="pill" data-on={!!profile.available}><span className="h-1.5 w-1.5 rounded-full" style={{ background: profile.available ? "#34d399" : "#f87171" }} />{profile.available ? "Ready" : "Not served yet"}</span>
+          <span className="pill" data-on>{profile.model || "psd"}</span>
+          {profile.endpoint_name && <span className="pill">{profile.endpoint_name}</span>}
+          <span className="pill"><Sparkles size={12} /> coding · tools · browser · memory</span>
+        </div>
+        {!profile.available && <p className="mb-3 text-[12px]" style={{ color: "var(--muted)" }}>Start the local model group or download/serve a Qwen Coder model from the Models hub. PSD will appear in the picker when its local endpoint is ready.</p>}
+        <button className="btn btn-primary" disabled={busy} onClick={() => { void load(); }}>
+          <RefreshCw size={14} className={busy ? "animate-spin" : ""} /> Refresh PSD status
+        </button>
+      </Section>
+
+      <Section
+        title="Learn while I am idle"
+        desc="After no new command for the idle window, PSD reviews one completed conversation at a time and catches up on durable memories and reusable skills. Active chats always win."
+      >
+        <div className="flex flex-col gap-2">
+          <Toggle
+            on={idle.idle_learning_enabled !== false}
+            onChange={(value) => void save({ idle_learning_enabled: value })}
+            label="Idle learning"
+            desc="Build memories and skills from completed work without changing model weights."
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <label className="text-[12px]" style={{ color: "var(--muted)" }}>
+              Start after (minutes)
+              <input className="input mt-1" type="number" min={1} max={1440} value={idle.idle_after_minutes ?? 10} disabled={busy} onChange={(e) => void save({ idle_after_minutes: Number(e.target.value) || 10 })} />
+            </label>
+            <label className="text-[12px]" style={{ color: "var(--muted)" }}>
+              Repeat every (minutes)
+              <input className="input mt-1" type="number" min={5} max={10080} value={idle.idle_cycle_minutes ?? 30} disabled={busy} onChange={(e) => void save({ idle_cycle_minutes: Number(e.target.value) || 30 })} />
+            </label>
+          </div>
+          <Toggle
+            on={idle.auto_memory !== false}
+            onChange={(value) => void save({ auto_memory: value })}
+            label="Learn durable memories"
+            desc="Keeps useful preferences, identity and project facts; it is instructed not to save secrets or transient chat."
+          />
+          <Toggle
+            on={idle.auto_skills !== false}
+            onChange={(value) => void save({ auto_skills: value })}
+            label="Build reusable skills"
+            desc="Turns proven multi-step workflows into reusable procedures and lets the existing skill audit review them."
+          />
+          <button className="btn self-start" disabled={busy} onClick={() => void learnNow()}>
+            <Sparkles size={14} /> Learn from the latest completed chat now
+          </button>
+          {status?.idle?.last_run_at && <p className="text-[12px]" style={{ color: "var(--muted)" }}>Last idle pass: {status.idle.last_run_at} · {status.idle.last_result || "reviewed"}</p>}
+        </div>
+      </Section>
+
+      <Section
+        title="Idle coding changes"
+        desc="The normal PSD agent can edit code when you ask it. Automatic idle edits are a separate, opt-in capability and require an existing absolute workspace."
+      >
+        <div className="flex flex-col gap-2">
+          <Toggle
+            on={idle.idle_code_changes === true}
+            onChange={(value) => void save({ idle_code_changes: value })}
+            label="Allow PSD to make bounded code fixes while idle"
+            desc="Off by default. When on, PSD only reviews coding conversations in the workspace below, inspects before editing, and runs focused verification."
+          />
+          <input
+            className="input"
+            placeholder="Absolute workspace path, e.g. C:\\Projects\\my-app"
+            value={workspaceValue}
+            disabled={busy}
+            onChange={(e) => setWorkspaceDraft(e.target.value)}
+            onBlur={() => {
+              if (workspaceValue !== (idle.idle_workspace || "")) void save({ idle_workspace: workspaceValue });
+            }}
+          />
+          {idle.idle_code_changes === true && !status?.idle?.workspace_valid && <p className="text-[12px] text-amber-300">Choose a folder that exists before enabling idle code changes.</p>}
+          <div className="flex items-start gap-2 rounded-xl px-3 py-2 text-[12px]" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--muted)" }}>
+            <ShieldAlert size={14} className="mt-0.5 shrink-0" />
+            PSD never edits outside the selected workspace in this mode, never changes dependencies/secrets/authentication, and still obeys the app's tool policy and approval limits.
           </div>
         </div>
       </Section>

@@ -49,6 +49,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+from src.psd_model import is_psd_spec
+
 APP_NAME = "psd.ai"
 DEFAULT_PORT = int(os.getenv("PSD_LLAMA_PORT", "8080") or "8080")
 
@@ -134,6 +136,20 @@ class ModelSpec:
 
 
 MODEL_SPECS: Tuple[ModelSpec, ...] = (
+    # PSD is the primary local profile.  These are ordinary Qwen2.5-Coder
+    # instruct weights, selected by hardware and served behind the stable
+    # ``psd`` alias; the model id and prompt/tool policy are psd.ai's layer.
+    ModelSpec(
+        id="psd-coder-7b",
+        label="PSD · Qwen2.5 Coder 7B Instruct",
+        family="qwen2.5-coder",
+        params_b=7.0,
+        repos=(
+            "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
+            "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF",
+        ),
+        max_context=32768,
+    ),
     ModelSpec(
         id="llama-3.3-70b",
         label="Llama 3.3 70B Instruct",
@@ -159,6 +175,17 @@ MODEL_SPECS: Tuple[ModelSpec, ...] = (
         max_context=131072,
     ),
     ModelSpec(
+        id="psd-coder-1.5b",
+        label="PSD · Qwen2.5 Coder 1.5B Instruct",
+        family="qwen2.5-coder",
+        params_b=1.5,
+        repos=(
+            "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+            "bartowski/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+        ),
+        max_context=32768,
+    ),
+    ModelSpec(
         id="qwen-2.5-1.5b",
         label="Qwen 2.5 1.5B Instruct",
         family="qwen2.5",
@@ -173,6 +200,17 @@ MODEL_SPECS: Tuple[ModelSpec, ...] = (
         params_b=1.0,
         repos=("unsloth/Llama-3.2-1B-Instruct-GGUF", "bartowski/Llama-3.2-1B-Instruct-GGUF"),
         max_context=131072,
+    ),
+    ModelSpec(
+        id="psd-coder-0.5b",
+        label="PSD · Qwen2.5 Coder 0.5B Instruct",
+        family="qwen2.5-coder",
+        params_b=0.5,
+        repos=(
+            "Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF",
+            "bartowski/Qwen2.5-Coder-0.5B-Instruct-GGUF",
+        ),
+        max_context=32768,
     ),
     ModelSpec(
         id="qwen-2.5-0.5b",
@@ -450,6 +488,28 @@ def select_model_file(
     return best[1], best[2], best[3]
 
 
+def _prefer_matches_spec(spec: ModelSpec, prefer_id: str) -> bool:
+    """Match the CLI's friendly ``psd`` name to either PSD size."""
+    wanted = (prefer_id or "").strip().lower()
+    if not wanted:
+        return False
+    if wanted in {"psd", "psd-coder"}:
+        return is_psd_spec(spec.id)
+    return spec.id.lower() == wanted
+
+
+def _order_group_plans_for_primary(plans: Sequence[Plan]) -> Tuple[Plan, ...]:
+    """Put PSD first so the stable profile is the default when available."""
+    return tuple(sorted(plans, key=lambda plan: (not is_psd_spec(plan.spec.id), plan.spec.params_b * -1)))
+
+
+def _server_alias(plan: Plan, *, psd_alias_used: bool = False) -> str:
+    """Return a stable server alias without exposing quant/file details."""
+    if is_psd_spec(plan.spec.id) and not psd_alias_used:
+        return "psd"
+    return f"psd-{plan.spec.id}"
+
+
 def plan_model(
     system: Dict[str, Any],
     files_by_repo: Dict[str, List[GGUFFile]],
@@ -466,8 +526,22 @@ def plan_model(
     """
     budget = memory_budget_gb(system)
     specs = MODEL_SPECS
-    if prefer_id:
-        wanted = [s for s in specs if s.id == prefer_id.lower()]
+    # The single-model launcher is also a fresh-install path. Prefer the
+    # stable PSD profile whenever one of its catalogue repositories is
+    # reachable, while retaining explicit user preferences and a general-model
+    # fallback when no PSD files were downloaded/listed.
+    effective_prefer = prefer_id
+    if not effective_prefer:
+        psd_reachable = any(
+            files_by_repo.get(repo)
+            for spec in specs
+            if is_psd_spec(spec.id)
+            for repo in spec.repos
+        )
+        if psd_reachable:
+            effective_prefer = "psd"
+    if effective_prefer:
+        wanted = [s for s in specs if _prefer_matches_spec(s, effective_prefer)]
         if wanted:
             specs = tuple(wanted)
 
@@ -666,11 +740,19 @@ def plan_model_group(
         available = [spec for spec in specs if variants_by_spec.get(spec.id)]
         if len(available) < min_models:
             continue
+        # A fresh install should actually preload PSD when a PSD weight is
+        # reachable. Without this preference the beam can fill all five slots
+        # with tiny general models on a 4 GB machine, leaving the requested
+        # default profile absent. If no PSD repository is reachable, retain the
+        # historical general-model fallback instead of failing startup.
+        effective_prefer = prefer_id or (
+            "psd" if any(is_psd_spec(spec.id) for spec in available) else ""
+        )
 
         for count in range(min(max_models, len(available)), min_models - 1, -1):
             best: Optional[Tuple[float, Tuple[Plan, ...]]] = None
             for selected_specs in combinations(available, count):
-                if prefer_id and not any(spec.id == prefer_id.lower() for spec in selected_specs):
+                if effective_prefer and not any(_prefer_matches_spec(spec, effective_prefer) for spec in selected_specs):
                     continue
                 selected = _best_group_variants(selected_specs, variants_by_spec, budget)
                 if selected is None:
@@ -680,7 +762,7 @@ def plan_model_group(
                     best = (quality, selected)
             if best is not None:
                 return GroupPlan(
-                    plans=best[1],
+                    plans=_order_group_plans_for_primary(best[1]),
                     budget_gb=round(budget, 2),
                     fits=True,
                     note=f"{len(best[1])} resident models selected for this machine",
@@ -708,7 +790,7 @@ def plan_model_group(
         if len(cheapest) >= min_models:
             break
     return GroupPlan(
-        plans=tuple(cheapest[:max_models]),
+        plans=_order_group_plans_for_primary(tuple(cheapest[:max_models])),
         budget_gb=round(budget, 2),
         fits=False,
         note="three smallest models selected; total memory is above the conservative budget",
@@ -1140,6 +1222,11 @@ def stop_servers(processes: Iterable[Optional[subprocess.Popen]]) -> None:
 ENDPOINT_NAME = "psd.ai Local Llama"
 
 
+def _public_model_id(plan: Plan, model_id: str) -> str:
+    """Keep the app-facing model id stable across llama-server versions."""
+    return "psd" if is_psd_spec(plan.spec.id) else model_id
+
+
 def register_endpoint(base_url: str, model_id: str, plan: Plan) -> str:
     """Insert/refresh the local endpoint row and return its id."""
     from core.database import Base, ModelEndpoint, SessionLocal, engine
@@ -1158,7 +1245,7 @@ def register_endpoint(base_url: str, model_id: str, plan: Plan) -> str:
         row.model_type = "llm"
         row.endpoint_kind = "local"
         row.supports_tools = True
-        row.cached_models = json.dumps([model_id])
+        row.cached_models = json.dumps([_public_model_id(plan, model_id)])
         row.hidden_models = json.dumps([])
         db.commit()
         return endpoint_id
@@ -1259,7 +1346,7 @@ def prepare_local_llama(
     elif not model_path.exists():
         raise RuntimeError(f"model file missing and downloads are disabled: {model_path}")
 
-    alias = f"psd-{plan.spec.id}"
+    alias = _server_alias(plan)
     base_url = f"http://{host}:{port}/v1"
     threads = threads or plan_threads(system)
 
@@ -1272,7 +1359,7 @@ def prepare_local_llama(
         log(f"  ==> llama-server already running on port {port} — reusing it.")
         model_id = existing
         endpoint_id = register_endpoint(base_url, model_id, plan)
-        became_default = set_default_model(endpoint_id, model_id) if set_default else False
+        became_default = set_default_model(endpoint_id, _public_model_id(plan, model_id)) if set_default else False
         state = {
             "model_id": model_id, "alias": alias, "spec_id": plan.spec.id,
             "label": plan.spec.label, "quant": plan.quant, "repo": plan.file.repo,
@@ -1331,7 +1418,7 @@ def prepare_local_llama(
         log_fh.close()
 
     endpoint_id = register_endpoint(base_url, model_id, plan)
-    became_default = set_default_model(endpoint_id, model_id) if set_default else False
+    became_default = set_default_model(endpoint_id, _public_model_id(plan, model_id)) if set_default else False
     state = {
         "model_id": model_id,
         "alias": alias,
@@ -1446,12 +1533,15 @@ def prepare_local_llama_group(
 
     processes: List[subprocess.Popen] = []
     states: List[Dict[str, Any]] = []
-    pending: List[Tuple[Plan, Path, int, int, subprocess.Popen, Any]] = []
+    pending: List[Tuple[Plan, Path, int, int, str, subprocess.Popen, Any]] = []
 
+    psd_alias_used = False
     for index, (plan, model_path) in enumerate(entries):
         model_port = port + index
         base_url = f"http://{host}:{model_port}/v1"
-        alias = f"psd-{plan.spec.id}"
+        alias = _server_alias(plan, psd_alias_used=psd_alias_used)
+        if is_psd_spec(plan.spec.id):
+            psd_alias_used = True
         gpu_layers = plan_gpu_layers(system, plan)
         if gpu_layers and not any(b in backends for b in ("vulkan", "cuda", "metal")):
             gpu_layers = 0
@@ -1459,7 +1549,7 @@ def prepare_local_llama_group(
         if existing:
             log(f"  ==> {plan.spec.label} already running on port {model_port} — reusing it.")
             endpoint_id = register_endpoint(base_url, existing, plan)
-            became_default = set_default_model(endpoint_id, existing) if set_default and not states else False
+            became_default = set_default_model(endpoint_id, _public_model_id(plan, existing)) if set_default and not states else False
             states.append({
                 "model_id": existing, "alias": alias, "spec_id": plan.spec.id,
                 "label": plan.spec.label, "quant": plan.quant, "repo": plan.file.repo,
@@ -1479,16 +1569,16 @@ def prepare_local_llama_group(
         log(f"  ==> Starting {plan.spec.label} on port {model_port}...")
         proc, log_fh = start_server(cmd)
         processes.append(proc)
-        pending.append((plan, model_path, model_port, gpu_layers, proc, log_fh))
+        pending.append((plan, model_path, model_port, gpu_layers, alias, proc, log_fh))
 
-    for plan, model_path, model_port, gpu_layers, proc, log_fh in pending:
+    for plan, model_path, model_port, gpu_layers, alias, proc, log_fh in pending:
         base_url = f"http://{host}:{model_port}"
         try:
             model_id = wait_until_healthy(base_url, proc, timeout=health_timeout)
             endpoint_id = register_endpoint(f"{base_url}/v1", model_id, plan)
-            became_default = set_default_model(endpoint_id, model_id) if set_default and not states else False
+            became_default = set_default_model(endpoint_id, _public_model_id(plan, model_id)) if set_default and not states else False
             states.append({
-                "model_id": model_id, "alias": f"psd-{plan.spec.id}", "spec_id": plan.spec.id,
+                "model_id": model_id, "alias": alias, "spec_id": plan.spec.id,
                 "label": plan.spec.label, "quant": plan.quant, "repo": plan.file.repo,
                 "file": str(model_path), "file_size_gb": round(plan.file.size_gb, 2),
                 "endpoint_id": endpoint_id, "base_url": f"{base_url}/v1", "port": model_port,

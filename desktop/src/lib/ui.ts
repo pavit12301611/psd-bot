@@ -92,7 +92,10 @@ export function shortModel(id?: string | null) {
 }
 
 export function displayModel(id: string, display?: string) {
-  return display || shortModel(id);
+  if (display) return display;
+  const leaf = shortModel(id).toLowerCase();
+  if (leaf === "psd" || leaf.startsWith("psd-coder")) return leaf === "psd" ? "PSD" : `PSD · ${shortModel(id)}`;
+  return shortModel(id);
 }
 
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;

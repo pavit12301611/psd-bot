@@ -587,6 +587,45 @@ export const voice = {
   speak: (text: string) => postJson<{ audio?: string; base64?: string }>("/api/tts/synthesize", { text, format: "base64" }),
 };
 
+// ---------- PSD local model + idle learning ----------
+export interface PsdIdleSettings {
+  idle_learning_enabled: boolean;
+  idle_after_minutes: number;
+  idle_cycle_minutes: number;
+  auto_memory: boolean;
+  auto_skills: boolean;
+  idle_code_changes: boolean;
+  idle_workspace: string;
+  idle_max_sessions: number;
+}
+export interface PsdStatus {
+  profile: {
+    id: string;
+    name: string;
+    available: boolean;
+    model: string;
+    endpoint_id?: string;
+    endpoint_url?: string;
+    endpoint_name?: string;
+    capabilities?: string[];
+    [key: string]: any;
+  };
+  idle: {
+    running: boolean;
+    settings: PsdIdleSettings;
+    last_run_at?: string;
+    last_session_id?: string;
+    last_result?: string;
+    workspace_valid?: boolean;
+    workspace?: string;
+  };
+}
+export const psd = {
+  status: () => get<PsdStatus>("/api/psd/status"),
+  update: (patch: Partial<PsdIdleSettings>) => patchJson<any>("/api/psd/settings", patch),
+  learnNow: () => postJson<{ ok: boolean; queued?: boolean }>("/api/psd/learn-now", {}),
+};
+
 // ---------- app settings (admin) ----------
 export const settings = {
   get: () => get<Record<string, any>>("/api/settings"),

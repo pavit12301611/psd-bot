@@ -120,6 +120,20 @@ def _has_recent_browser_activity(now: float | None = None) -> bool:
     return ((now if now is not None else time.monotonic()) - _LAST_BROWSER_ACTIVITY) < ttl
 
 
+def has_active_foreground_work() -> bool:
+    """Return True only while a request or model stream is actively running.
+
+    Most background jobs should also respect the visible-browser heartbeat via
+    :func:`has_foreground_activity`. PSD's idle learner is intentionally
+    different: an open but untouched psd.ai window is the exact idle state in
+    which it is meant to learn. It still must never compete with an active
+    request or chat stream, so this narrow helper omits the heartbeat signal.
+    """
+    if not _enabled():
+        return False
+    return _ACTIVE_REQUESTS > 0 or _has_active_chat_stream()
+
+
 def has_foreground_activity(now: float | None = None) -> bool:
     """Return True when foreground browser/model work should stop background jobs.
 

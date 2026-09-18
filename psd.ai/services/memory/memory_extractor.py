@@ -282,6 +282,7 @@ async def extract_and_store(
     endpoint_url: str,
     model: str,
     headers: Optional[dict] = None,
+    workload: str = "foreground",
 ):
     """Extract facts from recent conversation and store them.
 
@@ -367,6 +368,7 @@ async def extract_and_store(
                 # enough once thinking has room.
                 max_tokens=4096,
                 headers=headers,
+                workload=workload,
             )
 
             # Parse JSON, tolerating reasoning-model noise (<think> blocks, a
