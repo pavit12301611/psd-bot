@@ -63,6 +63,41 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "computer_control",
+            "description": "Control the user's actual desktop: move/click the mouse, type, press shortcuts, open apps and URLs, focus or close windows, read/write the clipboard, adjust volume, list processes. Use it when the user asks you to DO something on their PC. Prefer structured actions over bash. If you need to know where things are, take a screenshot or list windows first - never invent coordinates.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["screenshot", "screen_size", "click", "move", "drag", "scroll", "type", "key", "open", "windows", "focus", "close_window", "clipboard_get", "clipboard_set", "info", "processes", "kill", "notify", "volume", "wait"],
+                        "description": "The desktop action to run"
+                    },
+                    "params": {
+                        "type": "object",
+                        "description": "Action arguments. open: {\"target\": \"notepad\"} | type: {\"text\": \"...\"} | key: {\"combo\": \"ctrl+s\"} | click: {\"x\": 100, \"y\": 200} | focus / close_window: {\"title\": \"Untitled\"} | volume: {\"level\": 40} or {\"direction\": \"up\"} | wait: {\"seconds\": 2}"
+                    }
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "computer_screen",
+            "description": "Capture a screenshot of the user's screen (primary monitor by default). Use it when you need to know what is currently on the desktop before clicking or typing.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "monitor": {"type": "integer", "description": "Monitor index, 0 = primary/all screens"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "web_search",
             "description": "Quick single web lookup for a fact or current event mid-task. NOT for 'research X' / 'do research on X' — those are deep-research jobs; use trigger_research instead.",
             "parameters": {

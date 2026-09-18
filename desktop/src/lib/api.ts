@@ -587,6 +587,95 @@ export const voice = {
   speak: (text: string) => postJson<{ audio?: string; base64?: string }>("/api/tts/synthesize", { text, format: "base64" }),
 };
 
+// ---------- app settings (admin) ----------
+export const settings = {
+  get: () => get<Record<string, any>>("/api/settings"),
+  update: (patch: Record<string, any>) => postJson<Record<string, any>>("/api/settings", patch),
+};
+
+// ---------- Jarvis (voice agent + PC control) ----------
+export interface JarvisStatus {
+  enabled: boolean;
+  reply_language: string;
+  autonomy: string;
+  model: string;
+  llm_configured: boolean;
+  stt: { available?: boolean; provider?: string; model?: string; [k: string]: any };
+  tts: { available?: boolean; provider?: string; voice?: string; [k: string]: any };
+  computer: {
+    enabled?: boolean;
+    confirm_risky?: boolean;
+    os?: string;
+    supports_screenshot?: boolean;
+    supports_input?: boolean;
+    backends?: Record<string, boolean>;
+    missing_packages?: string[];
+    [k: string]: any;
+  };
+  actions: string[];
+}
+
+export interface JarvisActionResult {
+  ok: boolean;
+  action?: string;
+  risk?: string;
+  error?: string;
+  blocked?: boolean;
+  needs_confirmation?: boolean;
+  confirm_hint?: string;
+  [k: string]: any;
+}
+
+export interface JarvisTurn {
+  transcript: string;
+  reply: string;
+  audio: string | null;
+  speak_in_browser: boolean;
+  actions: JarvisActionResult[];
+  model: string;
+  planner: string;
+  took_ms: number;
+}
+
+export const jarvis = {
+  status: () => get<JarvisStatus>("/api/jarvis/status"),
+
+  transcribe: async (blob: Blob, name = "voice.webm") => {
+    const part = await fileToPart("file", new File([blob], name, { type: blob.type || "audio/webm" }));
+    return postForm<{ text?: string; empty?: boolean }>("/api/jarvis/transcribe", {}, [part]);
+  },
+
+  /** One spoken turn. Pass either `audio` (server STT) or `text` (already transcribed). */
+  turn: async (opts: {
+    audio?: Blob | null;
+    text?: string;
+    sessionId?: string | null;
+    allowActions?: boolean;
+    speak?: boolean;
+  }) => {
+    const form: Record<string, string> = {};
+    if (opts.text) form.text = opts.text;
+    if (opts.sessionId) form.session_id = opts.sessionId;
+    if (opts.allowActions !== undefined) form.allow_actions = opts.allowActions ? "1" : "0";
+    if (opts.speak !== undefined) form.speak = opts.speak ? "1" : "0";
+    const files = opts.audio
+      ? [await fileToPart("file", new File([opts.audio], "voice.webm", { type: opts.audio.type || "audio/webm" }))]
+      : undefined;
+    return postForm<JarvisTurn>("/api/jarvis/turn", form, files);
+  },
+
+  act: (action: string, params: Record<string, any> = {}, confirm = false) =>
+    postJson<JarvisActionResult>("/api/jarvis/act", { action, params, confirm }),
+
+  /** Screenshot of the primary monitor as a base64 PNG, or null on failure. */
+  screen: async (monitor = 0): Promise<string | null> => {
+    const res = await request<unknown>({ method: "GET", path: `/api/jarvis/screen?monitor=${monitor}` });
+    return res.base64 || null;
+  },
+
+  reset: (sessionId?: string | null) => postJson<{ ok: boolean }>("/api/jarvis/reset", { session_id: sessionId || null }),
+};
+
 // ---------- prefs ----------
 export const prefs = {
   get: (key: string) => get<any>(`/api/prefs/${key}`),

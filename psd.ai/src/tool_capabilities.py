@@ -142,6 +142,17 @@ _register(
     result_integrity=ResultIntegrity.WORKSPACE_UNTRUSTED,
 )
 _register(
+    {"computer_control", "computer_screen"},
+    ToolEffect.EXECUTE_CODE,
+    ToolEffect.UI_SIDE_EFFECT,
+    # Driving the real desktop is the highest-blast-radius thing psd.ai can
+    # do, and everything it reports back (window titles, clipboard, process
+    # names) is machine state the model did not author. Classified as
+    # external-untrusted so the post-web-content approval gate applies: after
+    # the agent has read an untrusted page it must ask before it types.
+    result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
+)
+_register(
     {"apply_patch", "edit_file", "write_file"},
     ToolEffect.WRITE_WORKSPACE,
     # Successful writes include unified diffs that can echo arbitrary existing

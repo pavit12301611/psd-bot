@@ -14,6 +14,8 @@ export default function Shortcuts() {
     { keys: `${metaLabel}+L`, action: "Focus the composer" },
     { keys: `${metaLabel}+Shift+A`, action: "Toggle agent / chat mode" },
     { keys: `${metaLabel}+Shift+W`, action: "Toggle web search" },
+    { keys: `${metaLabel}+Shift+T`, action: "Talk to psd.ai (voice mode)" },
+    { keys: "Space (hold)", action: "Push to talk, on the Talk screen" },
     { keys: "Esc", action: "Close dialogs / stop generating" },
     { keys: "Enter", action: "Send message" },
     { keys: "Shift+Enter", action: "New line in composer" },

@@ -12,6 +12,7 @@ import {
   Telescope,
   Columns2,
   Mail,
+  Mic,
   Plus,
   Globe,
 } from "lucide-react";
@@ -22,6 +23,7 @@ import { openExternal } from "../lib/ui";
 
 const JUMP: { id: AppView; label: string; icon: typeof MessageSquare; keys: string }[] = [
   { id: "chat", label: "Chat", icon: MessageSquare, keys: "chat conversations" },
+  { id: "talk", label: "Talk to psd.ai", icon: Mic, keys: "talk voice speak jarvis microphone english" },
   { id: "models", label: "Models", icon: HardDrive, keys: "models download huggingface ollama gguf" },
   { id: "notes", label: "Notes", icon: StickyNote, keys: "notes memo" },
   { id: "tasks", label: "Tasks", icon: ListTodo, keys: "tasks schedule cron" },

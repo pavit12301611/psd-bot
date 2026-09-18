@@ -778,6 +778,18 @@ from routes.stt_routes import setup_stt_routes
 app.include_router(setup_stt_routes(stt_service))
 logger.info("STT service initialized (provider managed via settings)")
 
+# Jarvis — voice agent + desktop (computer) control
+# Pure registration: both services touch nothing until an action is asked for,
+# so importing them here costs no I/O and cannot fail on a headless box.
+from services.computer import get_computer_service
+from services.jarvis import get_jarvis_service
+from routes.jarvis_routes import setup_jarvis_routes
+
+computer_service = get_computer_service()
+jarvis_service = get_jarvis_service()
+app.include_router(setup_jarvis_routes(jarvis_service, computer_service))
+logger.info("Jarvis voice service initialized (computer control managed via settings)")
+
 # Documents (artifacts/canvas)
 from routes.document.document_routes import setup_document_routes
 document_router = setup_document_routes(session_manager, upload_handler)

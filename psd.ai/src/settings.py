@@ -63,6 +63,20 @@ DEFAULT_SETTINGS = {
     "stt_provider": "disabled",
     "stt_model": "base",
     "stt_language": "",
+    # Jarvis — the voice agent ("Talk to psd.ai").
+    # jarvis_reply_language is pinned to "en": the owner wants to speak in any
+    # language and always be answered in English.
+    "jarvis_enabled": True,
+    "jarvis_model": "",
+    "jarvis_reply_language": "en",
+    # "full"    — act on the PC without asking (the owner's default)
+    # "confirm" — act, but ask before risky actions (kill)
+    # "off"     — never touch the machine
+    "jarvis_autonomy": "full",
+    "jarvis_narrate": True,
+    # Desktop (computer) control — mouse, keyboard, windows, processes.
+    "computer_control_enabled": True,
+    "computer_control_confirm": False,
     "search_provider": "searxng",
     # Default fallback chain — when the primary provider fails or
     # rate-limits, we try DuckDuckGo next. Free, no API key required, so
