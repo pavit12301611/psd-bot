@@ -80,6 +80,25 @@ async def test_browser_service():
     assert "<!DOCTYPE html>" in html_content
     assert "Model's Choice" in html_content or "Embedded" in html_content
 
+    # 9. Test navigating to real websites and verifying rich HTML & elements
+    wiki_res = await browser.navigate("https://en.wikipedia.org/wiki/Artificial_intelligence")
+    assert "Wikipedia" in wiki_res["title"]
+    st_wiki = browser.get_state()
+    assert "html" in st_wiki
+    assert "Wikipedia" in st_wiki["html"]
+    assert len(st_wiki["history"]) > 0
+
+    gh_res = await browser.navigate("https://github.com/torvalds/linux")
+    assert "torvalds" in gh_res["title"] or "linux" in gh_res["title"]
+    st_gh = browser.get_state()
+    assert "GitHub" in st_gh["html"]
+    assert "Star" in st_gh["html"]
+
+    gen_res = await browser.navigate("https://example.com/test-page")
+    assert "example.com" in gen_res["title"].lower() or "test" in gen_res["title"].lower()
+    st_gen = browser.get_state()
+    assert len(st_gen["html"]) > 200
+
     print("PASS: test_browser_service")
 
 

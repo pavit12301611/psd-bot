@@ -783,6 +783,7 @@ export interface BrowserState {
   history: { url: string; title: string; time?: string }[];
   action_logs: BrowserActionLog[];
   element_count?: number;
+  html?: string;
 }
 
 export const browser = {

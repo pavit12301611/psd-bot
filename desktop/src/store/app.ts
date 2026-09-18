@@ -130,6 +130,7 @@ interface AppState {
   browserCanForward: boolean;
   browserSplitRatio: number;
   browserRefreshTick: number;
+  browserHtml: string;
 
   setBrowserOpen: (v: boolean) => void;
   toggleBrowser: () => void;
@@ -303,6 +304,7 @@ export const useApp = create<AppState>((set, getState) => ({
   browserCanForward: false,
   browserSplitRatio: 50,
   browserRefreshTick: 0,
+  browserHtml: "",
 
   setBrowserOpen: (v) => set({ browserOpen: v }),
   toggleBrowser: () => set((s) => ({ browserOpen: !s.browserOpen })),
@@ -320,6 +322,7 @@ export const useApp = create<AppState>((set, getState) => ({
         browserCanBack: st.can_back,
         browserCanForward: st.can_forward,
         browserLogs: st.action_logs || s.browserLogs,
+        browserHtml: st.html || s.browserHtml,
       }));
     } catch {
       /* ignore */
@@ -340,6 +343,7 @@ export const useApp = create<AppState>((set, getState) => ({
           browserCanBack: res.state.can_back,
           browserCanForward: res.state.can_forward,
           browserLogs: res.state.action_logs,
+          browserHtml: res.state.html || s.browserHtml,
           browserRefreshTick: s.browserRefreshTick + 1,
         }));
       }
@@ -362,6 +366,7 @@ export const useApp = create<AppState>((set, getState) => ({
           browserCanBack: res.state.can_back,
           browserCanForward: res.state.can_forward,
           browserLogs: res.state.action_logs,
+          browserHtml: res.state.html || s.browserHtml,
           browserRefreshTick: s.browserRefreshTick + 1,
         }));
       }
@@ -384,6 +389,7 @@ export const useApp = create<AppState>((set, getState) => ({
           browserCanBack: res.state.can_back,
           browserCanForward: res.state.can_forward,
           browserLogs: res.state.action_logs,
+          browserHtml: res.state.html || s.browserHtml,
           browserRefreshTick: s.browserRefreshTick + 1,
         }));
       }
@@ -401,6 +407,7 @@ export const useApp = create<AppState>((set, getState) => ({
           browserTitle: res.state.title,
           browserCanBack: res.state.can_back,
           browserCanForward: res.state.can_forward,
+          browserHtml: res.state.html || s.browserHtml,
           browserRefreshTick: s.browserRefreshTick + 1,
         }));
       }
@@ -418,6 +425,7 @@ export const useApp = create<AppState>((set, getState) => ({
           browserTitle: res.state.title,
           browserCanBack: res.state.can_back,
           browserCanForward: res.state.can_forward,
+          browserHtml: res.state.html || s.browserHtml,
           browserRefreshTick: s.browserRefreshTick + 1,
         }));
       }
@@ -428,8 +436,15 @@ export const useApp = create<AppState>((set, getState) => ({
 
   browserReload: async () => {
     try {
-      await browserApi.reload();
-      set((s) => ({ browserRefreshTick: s.browserRefreshTick + 1 }));
+      const res = await browserApi.reload();
+      if (res?.state) {
+        set((s) => ({
+          browserHtml: res.state.html || s.browserHtml,
+          browserRefreshTick: s.browserRefreshTick + 1,
+        }));
+      } else {
+        set((s) => ({ browserRefreshTick: s.browserRefreshTick + 1 }));
+      }
     } catch {
       /* ignore */
     }
@@ -885,6 +900,7 @@ export const useApp = create<AppState>((set, getState) => ({
                   browserCanBack: bs.can_back ?? s.browserCanBack,
                   browserCanForward: bs.can_forward ?? s.browserCanForward,
                   browserLogs: bs.action_logs || s.browserLogs,
+                  browserHtml: bs.html || s.browserHtml,
                   browserRefreshTick: s.browserRefreshTick + 1,
                 }));
               } else if (ev.browser_url) {

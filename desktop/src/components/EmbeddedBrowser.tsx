@@ -54,6 +54,7 @@ export default function EmbeddedBrowser({
   const canBack = useApp((s) => s.browserCanBack);
   const canForward = useApp((s) => s.browserCanForward);
   const refreshTick = useApp((s) => s.browserRefreshTick);
+  const html = useApp((s) => s.browserHtml);
   const navigate = useApp((s) => s.navigateBrowser);
   const search = useApp((s) => s.searchBrowser);
   const goBack = useApp((s) => s.browserBack);
@@ -440,9 +441,9 @@ export default function EmbeddedBrowser({
         <iframe
           ref={iframeRef}
           key={`browser-frame-${refreshTick}`}
-          src={`/api/browser/view?_t=${refreshTick}`}
+          srcDoc={html || "<!DOCTYPE html><html><body style='background:#0f1117;color:#e7e9f2;display:flex;align-items:center;justify-content:center;height:95vh;font-family:sans-serif;'>Loading fast browser...</body></html>"}
           title="Embedded Browser Content"
-          sandbox="allow-same-origin allow-scripts allow-forms"
+          sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
           className="h-full w-full border-none"
           style={{
             background: "transparent",
