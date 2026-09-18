@@ -22,6 +22,7 @@ import Research from "./components/Research";
 import Compare from "./components/Compare";
 import Email from "./components/Email";
 import ModelsHub from "./components/ModelsHub";
+import EmbeddedBrowser from "./components/EmbeddedBrowser";
 import { inTauri, onBackendStatus } from "./lib/ipc";
 
 function Toasts() {
@@ -246,6 +247,8 @@ function Workspace() {
 
 function Feature({ view }: { view: AppView }) {
   switch (view) {
+    case "browser":
+      return <EmbeddedBrowser isSplit={false} />;
     case "talk":
       return <Talk />;
     case "models":

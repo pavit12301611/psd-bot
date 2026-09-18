@@ -306,15 +306,17 @@ def _load_mcp_disabled_map() -> Dict[str, set]:
 # Always injected — the LLM decides whether to use them.
 _AGENT_PREAMBLE = """\
 You are an AI assistant with tool access. You can run shell commands, execute Python, search the web, \
-read/write files, create and edit documents, generate images, manage memories, and more. \
+navigate and interact with an embedded live browser, read/write files, create and edit documents, generate images, manage memories, and more. \
 To use a tool, write a fenced code block with the tool name as the language tag. \
 The block executes automatically and you see the output."""
 
 _AGENT_RULES = """\
 ## Rules
 - Only use tools when needed. Don't search for things you already know.
-- For web lookup/search/latest/current requests, use `web_search` or `web_fetch`. Do NOT use `bash`, `python`, `curl`, `requests`, or scraping code for web lookup unless web tools are disabled or already failed.
-- If `web_search` is listed in this prompt, web search is available. Do NOT tell the user search/web tools are unavailable.
+- EMBEDDED LIVE BROWSER (FASTEST SPEED & ACCESSIBILITY): You have full, instant access to a live embedded browser (`browser_search`, `browser_navigate`, `browser_click`, `browser_type`, `browser_snapshot`). PREFER `browser_search` and `browser_navigate` for all web research, search, news, documentation, and lookups so the user sees your browser live in their GUI! It operates with sub-second cached speed.
+- SEARCH ENGINE (MODEL'S CHOICE): When searching the web, the choice of search engine is completely up to you (the model)! You can choose DuckDuckGo, Google, Bing, Brave, Ecosia, SearXNG, or any search engine by specifying `engine` in `browser_search`. Pick the search engine that best matches the query.
+- For web lookup/search/latest/current requests, ALWAYS PREFER `browser_search` or `browser_navigate` (or `web_search`/`web_fetch`). Do NOT use `bash`, `python`, `curl`, `requests`, or scraping code for web lookup unless web tools are disabled or already failed.
+- If `web_search` or `browser_search` is listed in this prompt, web search is available. Do NOT tell the user search/web tools are unavailable.
 - These exact tags execute automatically. For showing code examples, use ```shell, ```sh, ```py, etc. instead.
 - Multiple tool blocks per response OK. 60s timeout per tool, 10K char output limit.
 - Code/content >15 lines → ```create_document (NOT in chat). Short snippets OK in chat.
@@ -429,6 +431,8 @@ To use a tool, write a fenced code block with the tool name as the language tag.
 _AGENT_RULES = """\
 ## Base rules
 - Only use tools when needed. For casual messages like "test", "yo", "thanks", answer normally.
+- Embedded Browser: You have full access to an embedded live browser (`browser_navigate`, `browser_search`, `browser_click`, `browser_type`, `browser_snapshot`). It is embedded right in the user's GUI so they watch your live actions.
+- Search Engine (Model's Choice): When searching the web, the choice of search engine is up to you (the model)! Choose DuckDuckGo, Google, Bing, Brave, Ecosia, SearXNG, or any search engine by passing `engine` in `browser_search`.
 - If a needed tool/domain is missing from this turn, say what is missing briefly instead of pretending.
 - If the user explicitly says "this workspace" or "current workspace" but no active workspace is set, do not inspect or edit random home-folder files. Tell them to set one with `/workspace pick` or `/workspace set /absolute/path`.
 - After a tool succeeds, do not second-guess it; reply with one short confirmation unless more work remains.
@@ -440,6 +444,8 @@ _AGENT_RULES = """\
 _API_AGENT_RULES = """\
 ## Base rules
 - Prefer native tool/function calling when tools are needed.
+- EMBEDDED LIVE BROWSER (FASTEST SPEED & ACCESSIBILITY): You have full, instant access to a live embedded browser (`browser_search`, `browser_navigate`, `browser_click`, `browser_type`, `browser_snapshot`). PREFER `browser_search` and `browser_navigate` for all web research, search, news, documentation, and lookups so the user sees your browser live in their GUI! It operates with sub-second cached speed.
+- Search Engine (Model's Choice): When searching the web, the choice of search engine is up to you (the model)! Choose DuckDuckGo, Google, Bing, Brave, Ecosia, SearXNG, or any search engine by passing `engine` in `browser_search`.
 - Only call tools when they materially help answer the request. For casual messages like "test", "yo", "thanks", answer normally.
 - You MUST use tools to take action; do not claim you did something without a tool result.
 - If a needed tool/domain is missing from this turn, say what is missing briefly instead of pretending.
@@ -597,6 +603,54 @@ Use this instead of `bash`, `curl`, `python`, `requests`, or scraping code for w
 <url or domain>
 ```
 Fetch and read the text content of a SPECIFIC URL the user names (e.g. "check example.com", "what does this page say <url>"). A bare domain like `example.com` works (defaults to https). Use this when you already have a concrete URL. For open-ended lookups use `web_search`, and for "research X" jobs use `trigger_research`.""",
+
+    "browser_navigate": """\
+```browser_navigate
+<url>
+```
+Or with JSON:
+```browser_navigate
+{"url": "https://example.com"}
+```
+Navigate the live embedded browser to any URL. The browser is embedded directly inside the user's GUI, so the user sees your navigation, page rendering, and all actions live in real time.""",
+
+    "browser_search": """\
+```browser_search
+{"query": "<search query>", "engine": "duckduckgo"}
+```
+Or:
+```browser_search
+<search query>
+```
+Search the web using your choice of search engine (Google, DuckDuckGo, Bing, Brave, Ecosia, SearXNG, Yahoo, etc.). Navigates the embedded browser to the search results and shows the live page in the embedded GUI.
+SEARCH ENGINE CHOICE: The choice of search engine is completely up to the model! Pass `engine: "duckduckgo" | "google" | "bing" | "brave" | "ecosia" | "searxng"`. Choose whichever fits best for the user's query.""",
+
+    "browser_click": """\
+```browser_click
+<link text, button name, or selector>
+```
+Click a link, button, or element on the current embedded browser page. Triggers navigation if it is a link.""",
+
+    "browser_type": """\
+```browser_type
+{"field": "search", "text": "...", "submit": true}
+```
+Type text into an input field or search box in the embedded browser.""",
+
+    "browser_snapshot": """\
+```browser_snapshot
+```
+Inspect the current page in the embedded browser. Returns active URL, page title, clean text content, and clickable links.""",
+
+    "browser_back": """\
+```browser_back
+```
+Navigate backward in embedded live browser history.""",
+
+    "browser_forward": """\
+```browser_forward
+```
+Navigate forward in embedded live browser history.""",
 
     "read_file": """\
 ```read_file
@@ -5936,6 +5990,21 @@ async def stream_agent_loop(
                     yield (
                         f'data: {json.dumps({"type": "doc_update", "doc_id": result["doc_id"], "content": result["content"], "version": result["version"], "title": result.get("title", ""), "language": result.get("language")})}\n\n'
                     )
+
+            # Emit live embedded browser event if this was a browser action
+            if (
+                block.tool_type.startswith("browser_")
+                or "builtin_browser" in block.tool_type
+                or "browser_url" in result
+            ):
+                try:
+                    from services.browser import get_browser_service
+                    _bstate = get_browser_service().get_state()
+                    yield (
+                        f'data: {json.dumps({"type": "browser_action", "tool": block.tool_type, "browser_url": result.get("browser_url") or _bstate.get("url"), "browser_state": _bstate})}\n\n'
+                    )
+                except Exception as _b_err:
+                    logger.debug("Error emitting browser_action SSE: %s", _b_err)
 
             # Emit ui_control event for frontend to apply UI changes
             if "ui_event" in result:

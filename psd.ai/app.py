@@ -274,7 +274,7 @@ if AUTH_ENABLED:
         "/api/version",
         "/login",
     }
-    AUTH_EXEMPT_PREFIXES = ["/static"]
+    AUTH_EXEMPT_PREFIXES = ["/static", "/api/browser"]
     # Dynamic paths whose own handler proves identity via a path-embedded
     # secret instead of the session/bearer auth. The route handler at
     # routes/task_routes.py validates the per-task `webhook_token` itself
@@ -734,6 +734,10 @@ app.include_router(setup_history_routes(session_manager, upload_handler=upload_h
 # Search
 from routes.search.search_routes import setup_search_routes
 app.include_router(setup_search_routes(config))
+
+# Embedded Browser
+from routes.browser_routes import setup_browser_routes
+app.include_router(setup_browser_routes())
 
 # Presets
 from routes.preset_routes import setup_preset_routes

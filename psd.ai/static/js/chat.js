@@ -3718,6 +3718,18 @@ import { loadPanel } from './panels.js';
                     }
                   }
                 }
+                // --- Render embedded browser card in tool output ---
+                if ((json.browser_url || (json.tool && json.tool.startsWith('browser_'))) && currentToolBubble) {
+                  const contentEl = currentToolBubble.querySelector('.agent-thread-content');
+                  if (contentEl && !contentEl.querySelector('.browser-preview-card')) {
+                    const bCard = document.createElement('div');
+                    bCard.className = 'browser-preview-card';
+                    bCard.style.cssText = 'margin-top:8px;padding:10px 14px;background:var(--card, #161923);border:1px solid var(--border);border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;';
+                    const targetUrl = json.browser_url || json.command || 'Embedded Browser';
+                    bCard.innerHTML = `<div style="display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;"><span style="font-size:16px;">🌐</span><span style="font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(targetUrl)}</span></div><a href="/api/browser/view" target="_blank" style="padding:4px 10px;background:var(--accent);color:#fff;border-radius:6px;text-decoration:none;font-weight:500;font-size:11px;flex-shrink:0;">Live View</a>`;
+                    contentEl.appendChild(bCard);
+                  }
+                }
                 // --- Reload sessions after manage_session tool (delete, rename, etc.) ---
                 // Debounce so bulk deletes don't fire loadSessions per call
                 if (json.tool === 'manage_session' && sessionModule) {

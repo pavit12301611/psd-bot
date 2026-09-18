@@ -8,11 +8,32 @@ Each service:
 - Can run in-process or as a standalone HTTP service
 """
 
-from .search import SearchService, SearchResult, SearchResponse
-from .docs import DocsService, DocChunk, IndexResult
-from .research import ResearchService, ResearchResult, ResearchSource
-from .memory import MemoryService, Memory, MemorySearchResult
-from .shell import ShellService, ShellResult
+try:
+    from .search import SearchService, SearchResult, SearchResponse
+except ImportError:
+    SearchService = SearchResult = SearchResponse = None
+
+try:
+    from .docs import DocsService, DocChunk, IndexResult
+except ImportError:
+    DocsService = DocChunk = IndexResult = None
+
+try:
+    from .research import ResearchService, ResearchResult, ResearchSource
+except ImportError:
+    ResearchService = ResearchResult = ResearchSource = None
+
+try:
+    from .memory import MemoryService, Memory, MemorySearchResult
+except ImportError:
+    MemoryService = Memory = MemorySearchResult = None
+
+try:
+    from .shell import ShellService, ShellResult
+except ImportError:
+    ShellService = ShellResult = None
+
+from .browser import EmbeddedBrowserService, get_browser_service, SEARCH_ENGINES
 
 __all__ = [
     # Search
@@ -34,4 +55,8 @@ __all__ = [
     # Shell
     "ShellService",
     "ShellResult",
+    # Browser
+    "EmbeddedBrowserService",
+    "get_browser_service",
+    "SEARCH_ENGINES",
 ]

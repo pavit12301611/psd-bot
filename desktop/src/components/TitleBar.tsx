@@ -5,6 +5,7 @@ import { useApp, type AppView } from "../store/app";
 
 const VIEW_LABEL: Record<AppView, string> = {
   chat: "Chat",
+  browser: "Live Browser",
   talk: "Talk to psd.ai",
   models: "Models",
   notes: "Notes",

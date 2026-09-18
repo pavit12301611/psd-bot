@@ -101,15 +101,31 @@ function Collapsible({ icon, title, children, defaultOpen = false, tone }: { ico
 }
 
 function Tool({ t }: { t: ToolCall }) {
+  const isBrowser = t.tool.startsWith("browser_") || t.tool.includes("builtin_browser") || t.tool === "web_search";
+  const setBrowserOpen = useApp((s) => s.setBrowserOpen);
+
   return (
     <Collapsible
-      icon={<Terminal size={14} />}
+      icon={isBrowser ? <Globe size={14} style={{ color: "var(--accent)" }} /> : <Terminal size={14} />}
       tone={t.running ? "var(--accent)" : t.exit_code && t.exit_code !== 0 ? "#f87171" : undefined}
       title={
         <span className="flex items-center gap-2">
           <span className="font-medium">{t.tool}</span>
           {t.command && <code className="truncate opacity-80" style={{ fontFamily: "var(--font-mono)", fontSize: "12px" }}>{t.command}</code>}
-          {t.running && (
+          {isBrowser && (
+            <button
+              type="button"
+              className="ml-auto rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors hover:bg-black/10 dark:hover:bg-white/10"
+              style={{ background: "var(--accent-soft)", color: "var(--accent)" }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setBrowserOpen(true);
+              }}
+            >
+              Open Live Browser
+            </button>
+          )}
+          {t.running && !isBrowser && (
             <span className="ml-auto flex items-center gap-1 text-[11px]">
               <Clock size={11} /> {t.elapsed ? `${Math.round(t.elapsed)}s` : "running"}
             </span>

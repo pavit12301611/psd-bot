@@ -9,14 +9,17 @@ This package contains only what's needed for:
 - Authentication
 """
 
-from src.llm_core import (
-    llm_call,
-    llm_call_async,
-    stream_llm,
-    list_model_ids,
-    normalize_model_id,
-    LLMConfig,
-)
+try:
+    from src.llm_core import (
+        llm_call,
+        llm_call_async,
+        stream_llm,
+        list_model_ids,
+        normalize_model_id,
+        LLMConfig,
+    )
+except ImportError:
+    llm_call = llm_call_async = stream_llm = list_model_ids = normalize_model_id = LLMConfig = None
 from .auth import AuthManager
 from .constants import *
 from .middleware import SecurityHeadersMiddleware
