@@ -293,11 +293,11 @@ export const useApp = create<AppState>((set, getState) => ({
 
   // Embedded Browser initial state
   browserOpen: false,
-  browserUrl: "about:home",
-  browserTitle: "Embedded Browser",
+  browserUrl: "https://duckduckgo.com",
+  browserTitle: "DuckDuckGo — Fast Search (Model's Choice)",
   browserEngine: "duckduckgo",
   browserStatus: "idle",
-  browserStatusMessage: "Ready",
+  browserStatusMessage: "Search Ready",
   browserLogs: [],
   browserCanBack: false,
   browserCanForward: false,

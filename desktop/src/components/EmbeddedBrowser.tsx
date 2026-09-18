@@ -68,6 +68,7 @@ export default function EmbeddedBrowser({
   const [logsOpen, setLogsOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // Sync address bar input with active URL
   useEffect(() => {
@@ -77,6 +78,19 @@ export default function EmbeddedBrowser({
   // Initial load
   useEffect(() => {
     loadState();
+  }, []);
+
+  // Keyboard shortcut Ctrl+L / Cmd+L to focus address bar
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "l") {
+        e.preventDefault();
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   // Listen to postMessage from iframe for internal link navigation
@@ -260,10 +274,11 @@ export default function EmbeddedBrowser({
               <Search size={12} className="shrink-0 text-muted" style={{ opacity: 0.6 }} />
             )}
             <input
+              ref={inputRef}
               type="text"
               value={inputUrl}
               onChange={(e) => setInputUrl(e.target.value)}
-              placeholder="Search or enter web address..."
+              placeholder="Search or enter web address (Ctrl+L)..."
               className="min-w-0 flex-1 bg-transparent text-[12px] outline-none"
               style={{ color: "var(--text)" }}
             />
@@ -345,7 +360,7 @@ export default function EmbeddedBrowser({
               }}
             />
             <span className="font-semibold text-[11px]" style={{ color: "var(--text)" }}>
-              {isBusy ? statusMessage || "Model active..." : "Live Embedded View"}
+              {isBusy ? statusMessage || "Model active..." : "⚡ Fast Engine Ready"}
             </span>
             <span className="truncate opacity-75">— {title || url}</span>
           </div>
@@ -358,6 +373,48 @@ export default function EmbeddedBrowser({
           >
             <Activity size={12} />
             <span>AI Actions ({logs.length})</span>
+          </button>
+        </div>
+
+        {/* Row 3: Instant Quick Access & Search Chips */}
+        <div className="flex items-center gap-1.5 overflow-x-auto py-0.5 text-[11px]">
+          <span className="shrink-0 font-semibold text-[10px]" style={{ color: "var(--accent)" }}>
+            ⚡ Fast AI Links:
+          </span>
+          <button
+            className="shrink-0 rounded-md px-2 py-0.5 transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+            style={{ background: "var(--bg-elev)", border: "1px solid var(--border)", color: "var(--text)" }}
+            onClick={() => search("Latest AI models benchmarks 2026", engine)}
+          >
+            🤖 Top AI Models
+          </button>
+          <button
+            className="shrink-0 rounded-md px-2 py-0.5 transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+            style={{ background: "var(--bg-elev)", border: "1px solid var(--border)", color: "var(--text)" }}
+            onClick={() => navigate("https://github.com/trending")}
+          >
+            🐙 GitHub Trending
+          </button>
+          <button
+            className="shrink-0 rounded-md px-2 py-0.5 transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+            style={{ background: "var(--bg-elev)", border: "1px solid var(--border)", color: "var(--text)" }}
+            onClick={() => search("Breaking Tech and Science News today", engine)}
+          >
+            🚀 Tech News
+          </button>
+          <button
+            className="shrink-0 rounded-md px-2 py-0.5 transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+            style={{ background: "var(--bg-elev)", border: "1px solid var(--border)", color: "var(--text)" }}
+            onClick={() => navigate("https://docs.python.org/3/")}
+          >
+            🐍 Python Docs
+          </button>
+          <button
+            className="shrink-0 rounded-md px-2 py-0.5 transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+            style={{ background: "var(--bg-elev)", border: "1px solid var(--border)", color: "var(--text)" }}
+            onClick={() => navigate("https://huggingface.co/models")}
+          >
+            🤗 Hugging Face
           </button>
         </div>
       </div>

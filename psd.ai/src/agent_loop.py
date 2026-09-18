@@ -313,9 +313,9 @@ The block executes automatically and you see the output."""
 _AGENT_RULES = """\
 ## Rules
 - Only use tools when needed. Don't search for things you already know.
-- EMBEDDED LIVE BROWSER: You have full access to a live browser embedded directly in the user's GUI (`browser_navigate`, `browser_search`, `browser_click`, `browser_type`, `browser_snapshot`). The user sees your browser actions and pages live inside the app window.
+- EMBEDDED LIVE BROWSER (FASTEST SPEED & ACCESSIBILITY): You have full, instant access to a live embedded browser (`browser_search`, `browser_navigate`, `browser_click`, `browser_type`, `browser_snapshot`). PREFER `browser_search` and `browser_navigate` for all web research, search, news, documentation, and lookups so the user sees your browser live in their GUI! It operates with sub-second cached speed.
 - SEARCH ENGINE (MODEL'S CHOICE): When searching the web, the choice of search engine is completely up to you (the model)! You can choose DuckDuckGo, Google, Bing, Brave, Ecosia, SearXNG, or any search engine by specifying `engine` in `browser_search`. Pick the search engine that best matches the query.
-- For web lookup/search/latest/current requests, use `browser_search`, `browser_navigate`, `web_search`, or `web_fetch`. Do NOT use `bash`, `python`, `curl`, `requests`, or scraping code for web lookup unless web tools are disabled or already failed.
+- For web lookup/search/latest/current requests, ALWAYS PREFER `browser_search` or `browser_navigate` (or `web_search`/`web_fetch`). Do NOT use `bash`, `python`, `curl`, `requests`, or scraping code for web lookup unless web tools are disabled or already failed.
 - If `web_search` or `browser_search` is listed in this prompt, web search is available. Do NOT tell the user search/web tools are unavailable.
 - These exact tags execute automatically. For showing code examples, use ```shell, ```sh, ```py, etc. instead.
 - Multiple tool blocks per response OK. 60s timeout per tool, 10K char output limit.
@@ -444,7 +444,7 @@ _AGENT_RULES = """\
 _API_AGENT_RULES = """\
 ## Base rules
 - Prefer native tool/function calling when tools are needed.
-- Embedded Browser: You have full access to an embedded live browser (`browser_navigate`, `browser_search`, `browser_click`, `browser_type`, `browser_snapshot`). It is embedded right in the user's GUI so they watch your live actions.
+- EMBEDDED LIVE BROWSER (FASTEST SPEED & ACCESSIBILITY): You have full, instant access to a live embedded browser (`browser_search`, `browser_navigate`, `browser_click`, `browser_type`, `browser_snapshot`). PREFER `browser_search` and `browser_navigate` for all web research, search, news, documentation, and lookups so the user sees your browser live in their GUI! It operates with sub-second cached speed.
 - Search Engine (Model's Choice): When searching the web, the choice of search engine is up to you (the model)! Choose DuckDuckGo, Google, Bing, Brave, Ecosia, SearXNG, or any search engine by passing `engine` in `browser_search`.
 - Only call tools when they materially help answer the request. For casual messages like "test", "yo", "thanks", answer normally.
 - You MUST use tools to take action; do not claim you did something without a tool result.

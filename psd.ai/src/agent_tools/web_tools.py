@@ -44,6 +44,12 @@ class WebSearchTool:
                 "elapsed_s": 0,
                 "tail": f"Searching web for: {query[:160]}",
             })
+        # Sync with embedded browser
+        try:
+            from services.browser import get_browser_service
+            asyncio.create_task(get_browser_service().search(query, source="web_search"))
+        except Exception:
+            pass
         try:
             text, sources = await asyncio.wait_for(
                 loop.run_in_executor(
@@ -76,7 +82,7 @@ class WebSearchTool:
         output = text[:MAX_OUTPUT_CHARS] if len(text) > MAX_OUTPUT_CHARS else text
         if sources:
             output += "\n\n<!-- SOURCES:" + json.dumps(sources) + " -->"
-        return {"output": output, "exit_code": 0}
+        return {"output": output, "exit_code": 0, "browser_url": f"https://duckduckgo.com/?q={urllib.parse.quote_plus(query)}"}
 
 class WebFetchTool:
     async def execute(self, content: str, ctx: dict) -> dict:
@@ -109,6 +115,14 @@ class WebFetchTool:
             return {"error": f"web_fetch: unsupported URL scheme (only http/https): {url[:80]}", "exit_code": 1}
         if not low.startswith(("http://", "https://")):
             url = "https://" + url
+
+        # Sync with embedded browser
+        try:
+            from services.browser import get_browser_service
+            asyncio.create_task(get_browser_service().navigate(url, source="web_fetch"))
+        except Exception:
+            pass
+
         loop = asyncio.get_running_loop()
         try:
             def _fetch():
@@ -168,4 +182,4 @@ class WebFetchTool:
         output = size_note + header + text
         if len(output) > MAX_OUTPUT_CHARS:
             output = output[:MAX_OUTPUT_CHARS] + "\n\n[...truncated]"
-        return {"output": output, "exit_code": 0}
+        return {"output": output, "exit_code": 0, "browser_url": url}
