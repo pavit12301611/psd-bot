@@ -166,6 +166,28 @@ If the download or the GPU start fails, psd.ai still opens — the failure is
 reported in that window and you can add a model under **Settings → Models**
 inside the app.
 
+### Troubleshooting
+
+**"numpy cannot be imported" / "import hangs"** — on Windows this was almost
+always the launcher's own bug rather than numpy: the check built a
+`cmd /c "..."` command line that *ended* in a quote, and `cmd.exe` strips the
+first and last quote from those, so the probe never actually ran and a healthy
+numpy looked dead. That is fixed. If you still hit it:
+
+1. `run.bat --doctor` — it times `import numpy` and prints the result.
+2. Run the command it prints by hand. If it takes 30–60 s once and is instant
+   afterwards, Windows Defender was scanning the ~40 MB OpenBLAS DLL on its
+   first load. That is slow, not broken — the launcher now retries once
+   instead of giving up.
+3. If it never returns, exclude `psd.ai\venv` in
+   **Windows Security → Virus & threat protection → Exclusions**. `run.bat`
+   offers to add that exclusion for you when it is run as administrator.
+4. `run.bat --skip-numpy-check` starts psd.ai anyway (RAG and semantic search
+   will be degraded if numpy is genuinely broken).
+
+`--doctor` also reports the microphone, free disk space, whether the Jarvis
+extras and faster-whisper are installed, and the live PC-control status.
+
 ## Desktop app (all platforms)
 
 ```bash

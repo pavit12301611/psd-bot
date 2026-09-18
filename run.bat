@@ -38,6 +38,8 @@ REM    run.bat --no-voice   skip the Jarvis extras (no local Whisper,
 REM                         no PC-control packages)
 REM    run.bat --no-models  skip the local model group this run
 REM    run.bat --no-app     set everything up, then stop (no window)
+REM    run.bat --skip-numpy-check   skip the numpy import check
+REM    run.bat --doctor     report what this PC is missing
 REM
 REM  Environment overrides
 REM
@@ -48,6 +50,8 @@ REM    PSD_NO_LOCAL_MODEL=1  never download local models
 REM    PSD_AI_COMPUTER_CONTROL=0/1  switch desktop control off/on
 REM    LLAMA_PORT=9090       first model port for the group
 REM    PSD_AI_RUNTIME_DIR=   where llama.cpp + weights are cached
+REM    PSD_AI_SKIP_NUMPY_CHECK=1  skip the numpy import check
+REM    NUMPY_IMPORT_BUDGET=90     seconds to allow for "import numpy"
 REM  ------------------------------------------------------------------
 REM ==================================================================
 
@@ -67,6 +71,8 @@ set "UPDATE=0"
 set "REBUILD=0"
 set "NO_VOICE=0"
 set "NO_APP=0"
+set "SKIP_NUMPY_CHECK=0"
+if defined PSD_AI_SKIP_NUMPY_CHECK set "SKIP_NUMPY_CHECK=1"
 
 :parse_args
 if "%~1"=="" goto :args_done
@@ -80,6 +86,7 @@ if /i "%~1"=="--rebuild" set "REBUILD=1"
 if /i "%~1"=="--no-voice"  set "NO_VOICE=1"
 if /i "%~1"=="--no-models" set "PSD_NO_LOCAL_MODEL=1"
 if /i "%~1"=="--no-app"    set "NO_APP=1"
+if /i "%~1"=="--skip-numpy-check" set "SKIP_NUMPY_CHECK=1"
 shift
 goto :parse_args
 :args_done
@@ -267,29 +274,38 @@ if "%UPDATE%"=="1" (
     call :pip_run "%VENVPY%" "-m pip install -r requirements.txt --disable-pip-version-check --no-input"
 )
 
-REM Verify numpy actually imports in THIS venv (20s budget). If the default
-REM build deadlocks on this PC, fall back to the numpy 1.26 line, which ships
-REM a different OpenBLAS build.
+REM Verify numpy actually imports in THIS venv. Two things make a naive check
+REM lie on real Windows PCs, and both are handled below:
+REM   * the first import after an install pulls in a ~40 MB OpenBLAS DLL that
+REM     Windows Defender scans on first touch - slow, not stuck; and
+REM   * `cmd /c "..."` with more than two quotes mangles the command, so the
+REM     old check could never succeed on ANY PC. See :_numpy_once.
+REM The budget is generous, a slow import is retried once (warm by then), and
+REM a genuine error is printed instead of guessed at.
+if not defined NUMPY_IMPORT_BUDGET set "NUMPY_IMPORT_BUDGET=60"
 echo  ==^> Verifying numpy...
-call :verify_numpy
-if errorlevel 1 (
-    echo      numpy 2.x hangs on import on this PC - switching to numpy 1.26 ...
-    "%VENVPY%" -m pip install --quiet --disable-pip-version-check "numpy<2" --force-reinstall
+if "%SKIP_NUMPY_CHECK%"=="1" (
+    echo      skipped ^(--skip-numpy-check^)
+) else (
     call :verify_numpy
-    if errorlevel 1 (
-        echo.
-        echo  [ERROR] numpy cannot be imported on this PC ^(import hangs^).
-        echo          This is usually antivirus / endpoint-protection interfering with
-        echo          the OpenBLAS DLL. Try: add the folder
-        echo            %APP_DIR%\venv
-        echo          to your antivirus exclusions, then double-click run.bat again.
-        echo.
-        call :log "ERROR: numpy import hangs"
-        pause
-        exit /b 1
+    if not errorlevel 1 (
+        echo       numpy OK ^(!NP_SECONDS!s^)
+    ) else (
+        echo      numpy did not import in !NP_SECONDS!s - trying the numpy 1.26 line,
+        echo      which ships a different OpenBLAS build...
+        "%VENVPY%" -m pip install --quiet --disable-pip-version-check "numpy<2" --force-reinstall
+        if errorlevel 1 (
+            echo      [WARN] the numpy 1.26 install failed - staying on the current build.
+        )
+        set "NP_RETRY=0"
+        call :verify_numpy
+        if not errorlevel 1 (
+            echo       numpy OK ^(!NP_SECONDS!s^)
+        ) else (
+            call :numpy_troubleshoot
+        )
     )
 )
-echo       numpy OK
 
 REM ----------------------------------------------------------------
 REM  4. Jarvis extras - voice mode ("Talk to psd.ai") + PC control
@@ -409,7 +425,8 @@ if not defined PSD_NO_LOCAL_MODEL (
         )
     )
     if exist "%PSD_AI_RUNTIME_DIR%\local_model_failed.txt" del /q "%PSD_AI_RUNTIME_DIR%\local_model_failed.txt"
-    start "psd.ai - local model group" cmd /k "\"%VENVPY%\" scripts\local_llama.py --port %LLAMA_PORT% --foreground"
+    REM Same doubled-quote wrapping as :_numpy_once - see the note there.
+    start "psd.ai - local model group" cmd /d /s /k ""%VENVPY%" scripts\local_llama.py --port %LLAMA_PORT% --foreground"
     "%VENVPY%" scripts\local_llama.py --wait-ready %MODEL_WAIT_SECONDS%
 ) else (
     echo.
@@ -566,6 +583,7 @@ echo    run.bat --rebuild       force-rebuild the desktop app
 echo    run.bat --no-voice      skip the Jarvis extras ^(voice + PC control^)
 echo    run.bat --no-models     skip the local model group
 echo    run.bat --no-app        set everything up, then stop
+echo    run.bat --skip-numpy-check  skip the numpy import check
 echo.
 echo  Logs are written to  logs\run.log
 echo.
@@ -597,20 +615,135 @@ for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "[math]::Round
 exit /b 0
 
 :verify_numpy
-REM returns errorlevel 0 if "import numpy" finishes within 20s, 1 otherwise
-if exist "venv\.np_ok" del /q "venv\.np_ok"
-start /b "" cmd /c "\"%VENVPY%\" -c \"import numpy\" >nul 2>&1 && echo ok> \"venv\.np_ok\""
-set /a _w=0
-:verify_numpy_wait
-if exist "venv\.np_ok" goto :verify_numpy_ok
-if %_w% geq 20 goto :verify_numpy_bad
-timeout /t 1 /nobreak >nul
-set /a _w+=1
-goto :verify_numpy_wait
+REM errorlevel 0 = "import numpy" finished, 1 = it did not.
+REM A slow FIRST import is retried once: that pass warms both the file cache
+REM and Defender's scan cache, so the second pass usually takes seconds.
+if not defined NP_RETRY set "NP_RETRY=1"
+set "NP_ATTEMPT=0"
+:verify_numpy_again
+set /a NP_ATTEMPT+=1
+call :_numpy_once %NUMPY_IMPORT_BUDGET%
+if not errorlevel 1 goto :verify_numpy_ok
+if %NP_ATTEMPT% GEQ 2 goto :verify_numpy_bad
+if "%NP_RETRY%"=="0" goto :verify_numpy_bad
+echo      ...no answer after %NP_SECONDS%s - retrying once before calling it stuck
+goto :verify_numpy_again
 :verify_numpy_bad
 exit /b 1
 :verify_numpy_ok
-del /q "venv\.np_ok"
+exit /b 0
+
+:_numpy_once
+REM Runs "import numpy" once in the background, waits up to %1 seconds, and
+REM sets NP_SECONDS to how long it took.
+REM
+REM The `cmd /d /s /c ""...""` wrapping is the actual bug fix. cmd.exe strips
+REM the FIRST and LAST quote from a /c command line unless the whole thing is
+REM wrapped in an extra pair, so the old single-quoted form turned
+REM     "C:\...\python.exe" -c "import numpy"
+REM into    C:\...\python.exe" -c "import numpy
+REM which fails instantly - the check reported "numpy hangs" on every PC,
+REM no matter how healthy numpy was. /s plus doubled quotes keeps it intact.
+set "_np_budget=%~1"
+if not defined _np_budget set "_np_budget=60"
+set "NP_SECONDS=0"
+if exist "venv\.np_ok" del /q "venv\.np_ok"
+if exist "venv\.np_fail" del /q "venv\.np_fail"
+if exist "venv\.np_err" del /q "venv\.np_err"
+start /b "" cmd /d /s /c ""%VENVPY%" -c "import numpy" >"venv\.np_err" 2>&1 && (echo ok>"venv\.np_ok") || (echo fail>"venv\.np_fail")"
+set /a _w=0
+:_numpy_once_wait
+if exist "venv\.np_fail" goto :_numpy_once_failed
+if exist "venv\.np_ok" (
+    set "NP_SECONDS=!_w!"
+    exit /b 0
+)
+if !_w! GEQ !_np_budget! (
+    set "NP_SECONDS=!_w!"
+    goto :_numpy_once_failed
+)
+timeout /t 1 /nobreak >nul
+set /a _w+=1
+if !_w! EQU 15 echo      ...15s ^(a cold venv scans a large OpenBLAS DLL - normal^)
+if !_w! EQU 45 echo      ...45s
+goto :_numpy_once_wait
+:_numpy_once_failed
+set "NP_SECONDS=!_w!"
+if exist "venv\.np_err" (
+    set "_np_lines=0"
+    for /f "usebackq tokens=* delims=" %%L in ("venv\.np_err") do (
+        set /a _np_lines+=1
+        if !_np_lines! LEQ 6 echo        %%L
+    )
+)
+exit /b 1
+
+:numpy_troubleshoot
+echo.
+echo  [WARN] "import numpy" did not finish in !NP_SECONDS!s inside this venv.
+echo.
+echo   On Windows that is nearly always one of two things:
+echo     1. Windows Defender scanning the freshly installed OpenBLAS DLL
+echo        ^(fastembed pulls in a ~40 MB one^) on its very first load - slow,
+echo        not broken. The retry above usually proves this.
+echo     2. A genuinely stuck OpenBLAS import ^(DLL loader lock, or a clash
+echo        with another BLAS/MKL copy earlier on your PATH^).
+echo.
+echo   Check it by hand in another window:
+echo     "%VENVPY%" -c "import numpy; print(numpy.__version__)"
+echo.
+set "NP_FIX="
+set /p "NP_FIX=   Add a Microsoft Defender exclusion for the venv now? [y/N] "
+if /i "!NP_FIX!"=="y" (
+    call :defender_exclusion
+    echo      re-checking...
+    call :verify_numpy
+    if not errorlevel 1 (
+        echo       numpy OK ^(!NP_SECONDS!s^) - the exclusion fixed it.
+        exit /b 0
+    )
+)
+set "NP_CONT="
+set /p "NP_CONT=   Continue anyway and start psd.ai? [y/N] "
+if /i "!NP_CONT!"=="y" (
+    echo      Continuing. If numpy really is broken, RAG and semantic search
+    echo      will be degraded - run  run.bat --doctor  to check it again.
+    call :log "WARN: continuing with a numpy import that did not finish"
+    exit /b 0
+)
+echo.
+echo   Add this folder to your antivirus exclusions and double-click run.bat:
+echo     %APP_DIR%\venv
+echo.
+echo   Or rebuild from scratch with:   run.bat --repair
+echo   Or skip this check with:        run.bat --skip-numpy-check
+echo.
+call :log "ERROR: numpy import did not finish"
+pause
+exit /b 1
+
+:defender_exclusion
+echo.
+echo  ==^> Microsoft Defender exclusion for the venv
+net session >nul 2>&1
+if errorlevel 1 (
+    echo      This needs an administrator window. Open PowerShell as
+    echo      Administrator and run these two lines:
+    echo.
+    echo        Add-MpPreference -ExclusionPath "%APP_DIR%\venv"
+    echo        Add-MpPreference -ExclusionPath "%APP_DIR%"
+    echo.
+    echo      Then double-click run.bat again.
+    exit /b 1
+)
+powershell -NoProfile -Command "Add-MpPreference -ExclusionPath '%APP_DIR%\venv'"
+if errorlevel 1 (
+    echo      [WARN] The exclusion command failed - add it by hand in
+    echo             Windows Security ^> Virus ^& threat protection ^> Exclusions.
+    exit /b 1
+)
+echo      Excluded: %APP_DIR%\venv
+call :log "defender exclusion added for venv"
 exit /b 0
 
 :doctor
@@ -640,6 +773,7 @@ echo.
 echo  -- Virtual environment ----------------------------------------
 set "_VENV_PY=%APP_DIR%\venv\Scripts\python.exe"
 set "_HAVE_VENV=0"
+set "VENVPY=%_VENV_PY%"
 if exist "%_VENV_PY%" set "_HAVE_VENV=1"
 if "%_HAVE_VENV%"=="0" (
     echo   [FAIL]  no venv yet - run run.bat once
@@ -707,6 +841,25 @@ if exist "%PSD_AI_RUNTIME_DIR%" (
     echo   [ OK ]  model cache: %PSD_AI_RUNTIME_DIR%
 ) else (
     echo   [ .. ]  model cache not created yet: %PSD_AI_RUNTIME_DIR%
+)
+
+echo.
+echo  -- numpy -------------------------------------------------------
+if "%_HAVE_VENV%"=="0" (
+    echo   [ .. ]  no venv yet - run run.bat once
+) else (
+    if not defined NUMPY_IMPORT_BUDGET set "NUMPY_IMPORT_BUDGET=60"
+    call :_numpy_once %NUMPY_IMPORT_BUDGET%
+    if not errorlevel 1 (
+        echo   [ OK ]  "import numpy" finished in !NP_SECONDS!s
+    ) else (
+        echo   [FAIL]  "import numpy" did not finish in !NP_SECONDS!s
+        echo           A cold venv is slow ^(Defender scans the OpenBLAS DLL on
+        echo           first load^) - run this again: if the second run is fast,
+        echo           there is nothing wrong. If it never finishes, exclude
+        echo             %APP_DIR%\venv
+        echo           in Windows Security ^> Virus ^& threat protection ^> Exclusions.
+    )
 )
 
 echo.
