@@ -761,6 +761,28 @@ def quant_of(filename: str) -> Optional[str]:
     return m.group(1).upper()
 
 
+# Files that live next to the real weights inside a GGUF repo but are not the
+# model itself:
+#
+#   mmproj-*   the vision projector, attached with --mmproj (find_mmproj owns it)
+#   eagle3-*   an EAGLE3 speculative-decoding draft
+#   mtp-*      a multi-token-prediction draft (Gemma 4 and friends ship these)
+#   *draft*    generic draft releases
+#
+# A draft is a perfectly valid GGUF with an attractive quant tag, so without
+# this filter it can OUTRANK the real weights (eagle3-gpt-oss-20b-Q8_0 beats
+# gpt-oss-20b-MXFP4 on quant rank) and then die at context creation with
+# "eagle3 requires ctx_other to be set" -- which is exactly how a first run
+# ends up with three dead llama-servers and "2 of 3 models ready".
+_AUX_GGUF_MARKERS = ("mmproj", "eagle", "mtp-", "-mtp", "draft", "specul", "dflash")
+
+
+def _is_auxiliary_gguf(name: str) -> bool:
+    """True for vision projectors and speculative-decoding drafts."""
+    low = name.lower()
+    return any(marker in low for marker in _AUX_GGUF_MARKERS)
+
+
 def candidate_files(repo: str, files: Iterable[Dict[str, Any]]) -> List[GGUFFile]:
     """Known-quant GGUFs from a HF tree listing, split releases reassembled.
 
@@ -779,6 +801,8 @@ def candidate_files(repo: str, files: Iterable[Dict[str, Any]]) -> List[GGUFFile
         if not path.lower().endswith(".gguf"):
             continue
         name = path.rsplit("/", 1)[-1]
+        if _is_auxiliary_gguf(name):
+            continue  # projector or draft: never a main model
         quant = quant_of(name)
         if quant is None or quant not in _QUANT_RANK_INDEX:
             continue
@@ -2881,6 +2905,27 @@ def _raw_from_disk() -> Dict[str, List[Dict[str, Any]]]:
     return out
 
 
+def _model_log_tail() -> str:
+    """Last line of run.sh's model log, so the wait message names the work.
+
+    The bootstrap writes its download/serve progress to
+    ``<repo root>/logs/local-model.log``; quoting its tail turns forty
+    identical "still waiting" lines into one line that says which weight file
+    is moving. Empty string when the log is not there (headless callers).
+    """
+    path = Path(__file__).resolve().parents[2] / "logs" / "local-model.log"
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - 4096))
+            chunk = fh.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+    lines = [ln.strip() for ln in chunk.splitlines() if ln.strip()]
+    return lines[-1][:110] if lines else ""
+
+
 def wait_for_ready(timeout: float, state_file: Path = STATE_FILE, fail_file: Path = FAIL_FILE,
                    poll: float = 2.0) -> int:
     """Block until a sibling bootstrap finishes (or gives up).
@@ -2890,7 +2935,9 @@ def wait_for_ready(timeout: float, state_file: Path = STATE_FILE, fail_file: Pat
     — either way the caller should still start the app.
     """
     deadline = time.time() + timeout
+    started = time.time()
     next_beat = time.time() + 20
+    beats = 0
     while time.time() < deadline:
         if state_file.exists():
             log("  ==> Local model is ready.")
@@ -2904,8 +2951,17 @@ def wait_for_ready(timeout: float, state_file: Path = STATE_FILE, fail_file: Pat
             log("         Starting psd.ai anyway - you can add a model under Settings > Models.")
             return 3
         if time.time() >= next_beat:
-            log("      still waiting for the local model (first run downloads a few GB)...")
-            next_beat = time.time() + 20
+            mins = int((time.time() - started) // 60)
+            detail = _model_log_tail()
+            if detail:
+                log(f"      [{mins:>3}m] still waiting for the local model: {detail}")
+            else:
+                log(f"      [{mins:>3}m] still waiting for the local model "
+                    "(first run downloads a few GB)...")
+            beats += 1
+            # Frequent at first, then quiet: a 40-line wall of identical
+            # messages says less than one line that names the download.
+            next_beat = time.time() + (20 if beats < 3 else 60)
         time.sleep(poll)
     log("  [warn] Timed out waiting for the local model - starting psd.ai anyway.")
     return 3

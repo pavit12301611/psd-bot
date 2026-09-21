@@ -1027,3 +1027,91 @@ def test_offline_rerun_reads_the_model_cache(tmp_path, monkeypatch):
     assert plan is not None
     # The projector is not a model candidate, but it is still findable.
     assert ll.find_mmproj("unsloth/Qwen3.5-9B-GGUF", raw["unsloth/Qwen3.5-9B-GGUF"]) is not None
+
+
+# ── auxiliary GGUFs: drafts and projectors are not models ────────────────────
+def test_candidate_files_skips_drafts_and_projectors():
+    """eagle3/MTP drafts and mmproj projectors must never become main weights.
+
+    A draft carries an attractive quant tag (eagle3-gpt-oss-20b-Q8_0 outranks
+    gpt-oss-20b-MXFP4), loads fine, then dies at context creation with
+    "eagle3 requires ctx_other to be set" - the exact failure a real Fedora
+    first run hit with three dead servers.
+    """
+    repo = "ggml-org/gpt-oss-20b-GGUF"
+    files = ll.candidate_files(repo, [
+        {"type": "file", "path": "eagle3-gpt-oss-20b-Q8_0.gguf", "size": int(22.0 * GB)},
+        {"type": "file", "path": "gpt-oss-20b-MXFP4.gguf", "size": int(12.0 * GB)},
+        {"type": "file", "path": "mmproj-F16.gguf", "size": int(1.0 * GB)},
+    ])
+    assert [f.filename for f in files] == ["gpt-oss-20b-MXFP4.gguf"]
+
+    gemma = ll.candidate_files("bartowski/gemma-4-12B-it-GGUF", [
+        {"type": "file", "path": "mtp-gemma-4-12B-it-Q8_0.gguf", "size": int(2.0 * GB)},
+        {"type": "file", "path": "gemma-4-12B-it-Q8_0.gguf", "size": int(13.0 * GB)},
+        {"type": "file", "path": "gemma-4-12B-it-draft-Q4_K_M.gguf", "size": int(4.0 * GB)},
+    ])
+    assert [f.filename for f in gemma] == ["gemma-4-12B-it-Q8_0.gguf"]
+
+
+def test_projector_still_found_by_find_mmproj():
+    """Excluding mmproj from candidates must not blind the vision path."""
+    repo = "unsloth/gemma-4-E2B-it-GGUF"
+    entries = [
+        {"type": "file", "path": "mmproj-F16.gguf", "size": int(1.0 * GB)},
+        {"type": "file", "path": "gemma-4-E2B-it-Q4_K_M.gguf", "size": int(3.0 * GB)},
+    ]
+    assert ll.candidate_files(repo, entries)[0].filename == "gemma-4-E2B-it-Q4_K_M.gguf"
+    projector = ll.find_mmproj(repo, entries)
+    assert projector is not None and projector.filename == "mmproj-F16.gguf"
+
+
+def test_group_plan_never_serves_a_speculative_draft():
+    listing = {
+        repo: files for repo, files in FILES.items()
+        if repo != "unsloth/gpt-oss-20b-GGUF"
+    }
+    listing["ggml-org/gpt-oss-20b-GGUF"] = ll.candidate_files(
+        "ggml-org/gpt-oss-20b-GGUF",
+        [
+            {"type": "file", "path": "eagle3-gpt-oss-20b-Q8_0.gguf", "size": int(22.0 * GB)},
+            {"type": "file", "path": "gpt-oss-20b-MXFP4.gguf", "size": int(12.0 * GB)},
+        ],
+    )
+    plan = ll.plan_model_group(_system(ram=24.0), listing)
+    assert plan is not None
+    for member in plan.plans:
+        low = member.file.filename.lower()
+        assert not low.startswith(("eagle", "mtp-", "mmproj")), member.file.filename
+    assert plan.plans[0].file.filename == "gpt-oss-20b-MXFP4.gguf"
+
+
+def test_wait_message_quotes_the_model_log(monkeypatch, tmp_path):
+    """The wait loop must say what is moving instead of repeating itself."""
+    monkeypatch.setattr(
+        ll, "_model_log_tail",
+        lambda: "[dl] Qwen3.5-9B-Q4_K_M.gguf 42% (5.6 GB)",
+    )
+    seen = []
+    monkeypatch.setattr(ll, "log", lambda msg: seen.append(msg))
+    monkeypatch.setattr(ll.time, "sleep", lambda _s: None)
+
+    clock = {"now": 1000.0}
+
+    def fake_time():
+        clock["now"] += 1.0
+        return clock["now"]
+
+    monkeypatch.setattr(ll.time, "time", fake_time)
+    rc = ll.wait_for_ready(
+        40, state_file=tmp_path / "state.json", fail_file=tmp_path / "fail.txt",
+        poll=0.0,
+    )
+    assert rc == 3  # nothing ever became ready: the timeout path
+    beats = [m for m in seen if "still waiting" in m]
+    assert beats, seen
+    assert "Qwen3.5-9B-Q4_K_M.gguf 42%" in beats[0]
+    assert beats[0].strip().startswith("[")
+    # Quiet after the first few beats: 40 s of waiting is at most two lines,
+    # not the forty-identical-line wall a first run used to print.
+    assert len(beats) <= 2, beats

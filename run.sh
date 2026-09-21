@@ -1008,14 +1008,49 @@ if [ -x "$HOME/.cargo/bin/cargo" ]; then
 fi
 
 cd "$DESKTOP_DIR" || die "cannot enter $DESKTOP_DIR"
-if [ ! -d node_modules ]; then
+# The gate is the tauri binary, not the node_modules directory: an install
+# that died halfway leaves the directory behind but no .bin/tauri, and then
+# `npm run tauri` fails with "tauri: command not found" on a box that looks
+# already installed.
+if [ ! -x node_modules/.bin/tauri ]; then
     echo "  ==> Installing desktop UI dependencies (first run only)..."
+    npm install --no-audit --no-fund || die "npm install failed - scroll up for details."
+fi
+if [ ! -x node_modules/.bin/tauri ]; then
+    echo "  ==> node_modules is incomplete (no tauri binary) - reinstalling once..."
+    log "WARN: node_modules present but tauri missing; clean reinstall"
+    rm -rf node_modules
     npm install --no-audit --no-fund || die "npm install failed - scroll up for details."
 fi
 
 if [ ! -x "src-tauri/target/release/psd-ai-desktop" ]; then
     echo "  ==> Building the desktop app (first run only, a few minutes)..."
-    npm run tauri build -- --no-bundle || die "Desktop app build failed - scroll up for details."
+    if ! npm run tauri build -- --no-bundle; then
+        # The engine's model group is already serving in the background, so
+        # dying here would throw away a working install over a UI build
+        # problem. Fall back to the headless server and say where it is.
+        echo
+        echo "  [WARN] Desktop app build failed - scroll up for the compiler output."
+        echo "         The local model group is already running, so psd.ai continues"
+        echo "         in headless mode instead of dying here:"
+        echo
+        echo "             open http://localhost:${APP_PORT:-7000} in any browser"
+        echo
+        echo "         Fix the window build later with:"
+        echo "             cd desktop && npm install && npm run tauri build"
+        log "WARN: desktop build failed; falling back to the headless server"
+        cd "$APP_DIR" || die "cannot enter $APP_DIR"
+        "$VENVPY" -m uvicorn app:app \
+            --host "${APP_BIND:-127.0.0.1}" --port "${APP_PORT:-7000}" &
+        SRV_PID=$!
+        wait "$SRV_PID"
+        echo
+        echo "  ------------------------------------------------------------"
+        echo "   psd.ai has closed."
+        echo "  ------------------------------------------------------------"
+        log "run.sh finished (headless fallback)"
+        exit 0
+    fi
 fi
 
 echo "      Starting desktop/src-tauri/target/release/psd-ai-desktop"
