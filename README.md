@@ -97,6 +97,17 @@ That's it. It will:
 7. **open the psd.ai desktop app** — on the very first launch it asks you to
    create your admin account right in the window
 
+### Graphical install dashboard
+
+While all of that runs, `./run.sh` also opens a **dashboard in your browser**
+(`http://127.0.0.1:7123`, loopback only): a step timeline, the live model
+download as a real progress bar, cards for each local model as it comes up,
+and a red error panel the moment anything fails — so a first run that dies
+somewhere says *where* and *why* instead of leaving you scrolling a terminal.
+If the install fails, the page stays open for ~10 minutes after `run.sh`
+exits. No browser session (SSH)? The same content is in `logs/run.log` and
+`logs/local-model.log`. Skip the page with `./run.sh --no-gui`.
+
 ### run.sh options
 
 | Command | What it does |
@@ -109,6 +120,7 @@ That's it. It will:
 | `./run.sh --no-voice` | skip the Jarvis extras |
 | `./run.sh --no-models` | skip the local model group for this run |
 | `./run.sh --no-app` | set everything up, then stop without opening the window |
+| `./run.sh --no-gui` | install without the browser dashboard (terminal only) |
 | `./run.sh --no-system-deps` | never touch `dnf`; use whatever is installed |
 | `./run.sh --skip-numpy-check` | start even if the numpy import probe fails |
 

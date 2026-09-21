@@ -44,7 +44,10 @@ only when you intentionally want LAN/reverse-proxy access.
 
 On Fedora the one-command path is the repo-root launcher: it installs the
 system packages with `dnf`, builds the venv, runs setup, starts the local
-model group and opens the desktop app.
+model group and opens the desktop app. While it works, it serves a graphical
+install dashboard at `http://127.0.0.1:7123` (opened automatically; steps,
+download progress, model cards and errors, loopback only — `--no-gui` skips
+it).
 
 ```bash
 git clone https://github.com/pavit12301611/psd-bot.git
@@ -366,6 +369,9 @@ docker compose logs psd_ai | grep -E 'ChromaDB|MemoryVectorStore|DEGRADED'
 **Fedora details.** `run.sh` installs the dnf package groups (core build
 dependencies, the desktop toolchain, and the Jarvis voice/PC-control tools),
 creates `psd.ai/venv`, runs setup, and starts the model group plus the app.
+Progress is mirrored to a browser dashboard on `127.0.0.1:7123`
+(`scripts/install_gui.py`, stdlib only, `--no-gui` to skip) that stays up
+briefly after a failure so the error panel can be read.
 PC control follows the session: Wayland goes through ydotool/wtype/grim and
 the XDG Desktop Portal, X11 through xdotool/wmctrl/scrot — and
 **Settings → Voice & PC** shows exactly which tools this session has, with the

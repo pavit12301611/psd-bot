@@ -39,6 +39,7 @@
 #                            no PC-control packages)
 #    ./run.sh --no-models    skip the local model group this run
 #    ./run.sh --no-app       set everything up, then stop (no window)
+#    ./run.sh --no-gui       no browser install dashboard (terminal only)
 #    ./run.sh --no-system-deps  do not touch dnf, use what is installed
 #    ./run.sh --skip-numpy-check skip the numpy import check
 #
@@ -60,6 +61,8 @@
 #                            (default ~/.local/share/psd.ai/runtime)
 #    PSD_AI_SKIP_NUMPY_CHECK=1  skip the numpy import check
 #    NUMPY_IMPORT_BUDGET=60  seconds to allow for "import numpy"
+#    PSD_NO_GUI=1            same as --no-gui
+#    PSD_INSTALL_GUI_PORT=   dashboard port (default 7123, loopback only)
 #
 #  ------------------------------------------------------------------
 #  Fedora notes
@@ -102,6 +105,7 @@ UPDATE=0
 REBUILD=0
 NO_VOICE=0
 NO_APP=0
+NO_GUI="${PSD_NO_GUI:-0}"
 NO_SYSTEM_DEPS="${PSD_NO_SYSTEM_DEPS:-0}"
 SKIP_NUMPY_CHECK="${PSD_AI_SKIP_NUMPY_CHECK:-0}"
 
@@ -121,6 +125,7 @@ for arg in "$@"; do
         --no-voice)           NO_VOICE=1 ;;
         --no-models)          PSD_NO_LOCAL_MODEL=1 ;;
         --no-app)             NO_APP=1 ;;
+        --no-gui)             NO_GUI=1 ;;
         --no-system-deps)     NO_SYSTEM_DEPS=1 ;;
         --skip-numpy-check)   SKIP_NUMPY_CHECK=1 ;;
         *)
@@ -138,10 +143,81 @@ log() {
     printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$LOG_FILE" 2>/dev/null || true
 }
 
+# ------------------------------------------------------------------
+# Graphical install dashboard
+#
+#   run.sh appends one JSON-lines marker per step transition to
+#   logs/install-steps.jsonl; scripts/install_gui.py serves a browser
+#   dashboard from those markers plus the two log tails (steps, download
+#   progress bar, model cards, error panel, live console). Everything
+#   here is best effort: no python3, no browser, no free port - the
+#   terminal install proceeds exactly as before.
+# ------------------------------------------------------------------
+GUI_STEP_FILE="${LOG_DIR}/install-steps.jsonl"
+GUI_PID=""
+GUI_URL=""
+CURRENT_STEP=""
+
+gui_step() {
+    # gui_step <id> <pending|running|done|warn|failed|skipped> [message]
+    local step="$1" state="$2" msg="${3:-}"
+    if [ "$state" = "running" ]; then CURRENT_STEP="$step"; fi
+    msg="$(printf '%s' "$msg" | tr '\n' ' ' | tr -d '"\\' | cut -c1-180)"
+    printf '{"ts":"%s","step":"%s","state":"%s","msg":"%s"}\n' \
+        "$(date '+%H:%M:%S')" "$step" "$state" "$msg" \
+        >>"$GUI_STEP_FILE" 2>/dev/null || true
+}
+
+start_install_gui() {
+    # start_install_gui <python interpreter>
+    [ "$NO_GUI" = "1" ] && return 0
+    [ -n "$GUI_URL" ] && return 0
+    local py="$1"
+    local port_file="${LOG_DIR}/install-gui.port"
+    local pid_file="${LOG_DIR}/install-gui.pid"
+
+    # A dashboard from a run minutes ago may still be in its grace window;
+    # reuse it instead of stacking servers on the same port.
+    if [ -r "$pid_file" ] && kill -0 "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null \
+       && [ -r "$port_file" ]; then
+        GUI_URL="http://127.0.0.1:$(cat "$port_file" 2>/dev/null)"
+    else
+        rm -f "$port_file" "$pid_file" 2>/dev/null || true
+        setsid "$py" "${APP_DIR}/scripts/install_gui.py" \
+            --log-dir "$LOG_DIR" \
+            --port "${PSD_INSTALL_GUI_PORT:-7123}" \
+            --run-pid "$$" >>"${LOG_DIR}/install-gui.log" 2>&1 &
+        GUI_PID=$!
+        local i
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+            [ -r "$port_file" ] && break
+            sleep 0.3 2>/dev/null || sleep 1
+        done
+        [ -r "$port_file" ] || return 0   # server never came up: terminal-only
+        GUI_URL="http://127.0.0.1:$(cat "$port_file" 2>/dev/null)"
+    fi
+    [ -n "$GUI_URL" ] || return 0
+    echo "  ==> Install dashboard:  $GUI_URL"
+    log "install dashboard at $GUI_URL"
+    if [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ] && have_bin xdg-open; then
+        ( setsid xdg-open "$GUI_URL" >/dev/null 2>&1 & ) 2>/dev/null || true
+    fi
+}
+
 die() {
     echo
     echo "  [ERROR] $*"
     echo
+    # Mark the step that was in flight, then the run itself, so the browser
+    # dashboard shows exactly where and why the install died - and stays up
+    # for its grace window after this script exits.
+    if [ -n "$CURRENT_STEP" ]; then gui_step "$CURRENT_STEP" failed "$*"; fi
+    gui_step run failed "$*"
+    if [ -n "$GUI_URL" ]; then
+        echo "          Details are on the install dashboard: $GUI_URL"
+        echo "          (it stays open for a while after this script exits)"
+        echo
+    fi
     log "ERROR: $*"
     exit 1
 }
@@ -183,6 +259,10 @@ export MKL_NUM_THREADS=1
 MODEL_PID=""
 
 cleanup() {
+    local rc=$?
+    # The dashboard outlives this script by its grace window so a failure
+    # stays readable in the browser; this marker flips it to "finished".
+    gui_step run exited "code $rc"
     # The model group is a child of this script, so it goes when the app does.
     # setsid gave it its own process group; killing the group also reaps the
     # llama-server processes it spawned.
@@ -659,6 +739,18 @@ echo "  ============================================================"
 echo "    $OS_NAME"
 echo
 
+# Start the browser dashboard first so it covers the whole install,
+# including the dnf step. Needs only a system python3 (any 3.x); the
+# venv does not exist yet at this point.
+#
+# Markers from an earlier run (a --doctor exit also writes one) must not
+# colour this one - the dashboard reads the file whole - so a fresh run
+# starts with a fresh timeline.
+rm -f "$GUI_STEP_FILE" 2>/dev/null || true
+if command -v python3 >/dev/null 2>&1; then
+    start_install_gui python3
+fi
+
 # ------------------------------------------------------------------
 # --update : pull the latest code, then continue with setup
 # ------------------------------------------------------------------
@@ -680,7 +772,9 @@ fi
 # ------------------------------------------------------------------
 # 1. System packages
 # ------------------------------------------------------------------
+gui_step system running "checking/installing RPM packages with dnf"
 install_system_deps
+gui_step system done "system packages present"
 
 if ! have_bin ffmpeg; then
     echo
@@ -693,6 +787,7 @@ fi
 # ------------------------------------------------------------------
 # 2. Python 3.11+
 # ------------------------------------------------------------------
+gui_step python running "looking for Python 3.11+"
 echo "  ==> Looking for Python 3.11+..."
 PYCMD="$(find_python)"
 if [ -z "$PYCMD" ]; then
@@ -703,6 +798,11 @@ fi
 PYVER="$("$PYCMD" -c 'import platform; print(platform.python_version())')"
 echo "      Using Python $PYVER ($PYCMD)"
 log "python=$PYVER via $PYCMD"
+gui_step python done "Python $PYVER"
+if [ -z "$GUI_URL" ]; then
+    # No system python3 before the dnf step - start the dashboard now.
+    start_install_gui "$PYCMD"
+fi
 
 # ------------------------------------------------------------------
 # 3. Virtual environment
@@ -729,6 +829,7 @@ if [ -x "$VENVPY" ] && [ -f "venv/.deps_ok" ]; then
 fi
 
 if [ ! -x "$VENVPY" ]; then
+    gui_step venv running "creating the virtual environment"
     echo "  ==> Creating virtual environment (venv)..."
     if ! "$PYCMD" -m venv venv; then
         echo
@@ -736,17 +837,20 @@ if [ ! -x "$VENVPY" ]; then
         echo "          On Fedora this is almost always the pip bootstrap missing:"
         echo "            $(sudo_cmd) dnf install python3-pip python3-devel"
         echo
+        gui_step venv failed "python3 -m venv could not bootstrap pip - install python3-pip python3-devel"
         log "ERROR: venv creation failed"
         exit 1
     fi
 else
     echo "  ==> Virtual environment already exists - skipping."
 fi
+gui_step venv done
 
 # ------------------------------------------------------------------
 # 4. Dependencies
 # ------------------------------------------------------------------
 if [ ! -f "venv/.deps_ok" ]; then
+    gui_step deps running "pip install -r requirements.txt (a few minutes on first run)"
     echo "  ==> Installing dependencies... first run can take a few minutes."
     pip_run "$VENVPY" -m pip install --upgrade pip --quiet --disable-pip-version-check \
         || echo "      [WARN] pip upgrade failed - continuing with the bundled pip."
@@ -758,13 +862,16 @@ if [ ! -f "venv/.deps_ok" ]; then
         echo "          (Or:  ./run.sh --repair  after installing the build deps:"
         echo "            $(sudo_cmd) dnf install ${PKGS_CORE[*]})"
         echo
+        gui_step deps failed "pip install -r requirements.txt failed - see the pip error above"
         log "ERROR: pip install requirements.txt failed"
         exit 1
     fi
     echo ok > "venv/.deps_ok"
+    gui_step deps done "requirements installed"
 else
     echo "  ==> Dependencies already installed - skipping."
     echo "      (./run.sh --repair forces a fresh install.)"
+    gui_step deps done "already installed"
 fi
 if [ "$UPDATE" = "1" ]; then
     echo "  ==> --update : refreshing dependencies..."
@@ -798,6 +905,7 @@ else
         echo "      will be degraded - run  ./run.sh --doctor  to check it again."
         log "WARN: continuing with a numpy import that did not finish"
     else
+        gui_step deps failed "numpy import did not finish in this venv"
         log "ERROR: numpy import did not finish"
         exit 1
     fi
@@ -817,13 +925,17 @@ fi
 #     failure here is a warning, never a hard stop.
 # ------------------------------------------------------------------
 if [ "$NO_VOICE" = "1" ]; then
+    gui_step voice skipped "--no-voice"
     echo
     echo "  ==> --no-voice : skipping the Jarvis extras."
     echo "      Voice mode will use the browser for speech, and PC control"
     echo "      will rely on the system binaries alone."
 elif [ ! -f "requirements-jarvis.txt" ]; then
+    gui_step voice skipped "requirements-jarvis.txt not found"
     echo "  ==> requirements-jarvis.txt not found - skipping the Jarvis extras."
 else
+    VOICE_WARN=0
+    gui_step voice running "installing voice + PC-control extras"
     if [ ! -f "venv/.jarvis_ok" ]; then
         echo
         echo "  ==> Installing the Jarvis extras (voice + PC control)..."
@@ -838,6 +950,7 @@ else
             echo "             fallbacks; re-run later with:"
             echo "               $VENVPY -m pip install -r requirements-jarvis.txt"
             log "WARN: jarvis extras install failed"
+            VOICE_WARN=1
         fi
     else
         echo "  ==> Jarvis extras already installed - skipping."
@@ -858,7 +971,13 @@ else
             echo "             Set PSD_NO_LOCAL_STT=1 to stop asking, or install it"
             echo "             later. Voice mode will use the browser instead."
             log "WARN: faster-whisper install failed"
+            VOICE_WARN=1
         fi
+    fi
+    if [ "${VOICE_WARN:-0}" = "1" ]; then
+        gui_step voice warn "some extras failed - built-in fallbacks will be used"
+    else
+        gui_step voice done
     fi
 fi
 
@@ -866,17 +985,21 @@ fi
 # 6. First-time setup (data folders, database, .env). The admin account
 #    is created inside the desktop app's own first-run screen.
 # ------------------------------------------------------------------
+gui_step setup running "setup.py (data folders, database, .env)"
 echo "  ==> Running setup..."
 export PSD_AI_DEFER_ADMIN=1
 export PSD_AI_SKIP_RUN_HINT=1
 if ! "$VENVPY" setup.py; then
     die "setup.py failed - scroll up for details."
 fi
+gui_step setup done
 
 if [ "$NO_APP" = "1" ]; then
     echo
     echo "  ==> --no-app : setup finished. The desktop app was not started."
     echo
+    gui_step desktop skipped "--no-app"
+    gui_step launch skipped "--no-app"
     log "setup done (--no-app)"
     exit 0
 fi
@@ -896,6 +1019,7 @@ fi
 #     Set PSD_NO_LOCAL_MODEL=1 to skip this and bring your own model.
 # ------------------------------------------------------------------
 if [ -z "${PSD_NO_LOCAL_MODEL:-}" ]; then
+    gui_step models running "downloading & serving the model group (first run: several GB)"
     echo
     echo "  ==> Starting the local model group in the background..."
     echo "      First run downloads llama.cpp + 3-5 fit model weights (a few GB each)."
@@ -928,12 +1052,23 @@ if [ -z "${PSD_NO_LOCAL_MODEL:-}" ]; then
 
     "$VENVPY" scripts/local_llama.py --wait-ready "$MODEL_WAIT_SECONDS"
     if [ -f "${PSD_AI_RUNTIME_DIR}/local_model_failed.txt" ]; then
+        gui_step models warn "model group reported a failure - psd.ai still starts; add a model in Settings"
         echo "      [WARN] the model group reported a failure:"
         sed 's/^/             /' "${PSD_AI_RUNTIME_DIR}/local_model_failed.txt" 2>/dev/null | head -12
         echo "             psd.ai will still start; you can add a model in Settings."
         log "WARN: model group reported failure"
+    elif [ -f "${PSD_AI_RUNTIME_DIR}/local_model.json" ]; then
+        n_models="$(grep -o '"count":[[:space:]]*[0-9]*' \
+            "${PSD_AI_RUNTIME_DIR}/local_model_group.json" 2>/dev/null \
+            | head -1 | grep -o '[0-9]*$')"
+        gui_step models done "${n_models:+$n_models }local models serving"
+    else
+        # wait-ready timed out but nothing failed: the bootstrap keeps
+        # downloading in the background and the dashboard follows the log.
+        gui_step models running "still downloading in the background - the dashboard follows it live"
     fi
 else
+    gui_step models skipped "PSD_NO_LOCAL_MODEL"
     echo
     echo "  ==> PSD_NO_LOCAL_MODEL is set - skipping the local model download."
 fi
@@ -966,9 +1101,12 @@ if [ "$REBUILD" = "0" ]; then
 fi
 
 if [ -n "$APP_BIN" ]; then
+    gui_step desktop done "using the prebuilt app"
+    gui_step launch running "starting the desktop app"
     echo "      Using $APP_BIN"
     log "launching app: $APP_BIN"
     "$APP_BIN"
+    gui_step launch done "app closed"
     echo
     echo "  ------------------------------------------------------------"
     echo "   psd.ai has closed."
@@ -1008,6 +1146,7 @@ if [ -x "$HOME/.cargo/bin/cargo" ]; then
 fi
 
 cd "$DESKTOP_DIR" || die "cannot enter $DESKTOP_DIR"
+gui_step desktop running "npm install + Rust build of the desktop app (first run: a few minutes)"
 # The gate is the tauri binary, not the node_modules directory: an install
 # that died halfway leaves the directory behind but no .bin/tauri, and then
 # `npm run tauri` fails with "tauri: command not found" on a box that looks
@@ -1039,11 +1178,14 @@ if [ ! -x "src-tauri/target/release/psd-ai-desktop" ]; then
         echo "         Fix the window build later with:"
         echo "             cd desktop && npm install && npm run tauri build"
         log "WARN: desktop build failed; falling back to the headless server"
+        gui_step desktop warn "tauri build failed - continuing with the headless server"
+        gui_step launch running "headless server on http://localhost:${APP_PORT:-7000}"
         cd "$APP_DIR" || die "cannot enter $APP_DIR"
         "$VENVPY" -m uvicorn app:app \
             --host "${APP_BIND:-127.0.0.1}" --port "${APP_PORT:-7000}" &
         SRV_PID=$!
         wait "$SRV_PID"
+        gui_step launch done "headless server stopped"
         echo
         echo "  ------------------------------------------------------------"
         echo "   psd.ai has closed."
@@ -1053,9 +1195,12 @@ if [ ! -x "src-tauri/target/release/psd-ai-desktop" ]; then
     fi
 fi
 
+gui_step desktop done "built psd-ai-desktop"
+gui_step launch running "starting the desktop app"
 echo "      Starting desktop/src-tauri/target/release/psd-ai-desktop"
 log "launching freshly built app"
 "${DESKTOP_DIR}/src-tauri/target/release/psd-ai-desktop"
+gui_step launch done "app closed"
 
 echo
 echo "  ------------------------------------------------------------"
