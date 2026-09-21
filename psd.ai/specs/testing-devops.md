@@ -16,7 +16,7 @@ This spec covers development and validation surfaces in:
 - GPU helper scripts `scripts/check-docker-gpu.sh` and `scripts/check-docker-amd-gpu.sh`;
 - `.github/` templates, workflows, and description-check scripts;
 - contributor workflow docs in `CONTRIBUTING.md` and `docs/pr-blocker-audit.md`;
-- platform launchers `launch-windows.ps1`, `launcher.py`, `psd.ai.spec`, `build-windows-portable.ps1`, `start-macos.sh`, `build-macos-app.sh`, and `update_windows.bat`;
+- the Fedora launcher `run.sh`, the packaging in `packaging/` (`psd-ai.spec`, `psd-ai.desktop`, `psd-ai.metainfo.xml`), and `psd.ai/install-service.sh`;
 - setup/service files such as `setup.py`, `install-service.sh`, and `psd_ai-ui.service`.
 
 ## Test Runtime
@@ -72,7 +72,7 @@ Optional dependencies should produce clear degraded behavior when absent unless 
 Chroma has two compatibility modes:
 
 - Docker uses a separate `chromadb` service and core `chromadb-client`/`fastembed`;
-- native macOS setup removes conflicting `chromadb-client` and installs full `chromadb`.
+- native Fedora setup uses the same core `chromadb-client`/`fastembed` pair as Docker, against an optional standalone Chroma service.
 
 Vector features should fail fast or degrade to unhealthy/keyword fallback when the service is unavailable.
 
@@ -113,13 +113,12 @@ AMD helper behavior:
 - `scripts/check-docker-amd-gpu.sh` is read-only;
 - it prints expected `COMPOSE_FILE`/`RENDER_GID` values and verifies `/dev/kfd`/`/dev/dri` visibility.
 
-Native platform launchers:
+Native launcher, service and packaging:
 
-- `launch-windows.ps1` requires Python 3.11+, creates `venv`, installs `requirements.txt`, runs `setup.py`, discovers per-user Git Bash installs where possible, warns when Git Bash is missing, and starts uvicorn on port 7000 by default.
-- `launcher.py`, `psd.ai.spec`, and `build-windows-portable.ps1` own the PyInstaller-style portable Windows launcher path, including app-root/data-dir differences covered by `src.runtime_paths`.
-- `start-macos.sh` reads `.env`, defaults to port 7860 to avoid AirPlay conflicts, prefers Homebrew arm64 Python, installs/tolerates Homebrew Cookbook deps, handles Chroma package conflicts, starts ChromaDB for native runs, runs `setup.py`, and starts uvicorn.
-- `build-macos-app.sh` builds a launcher app around the existing repo venv and logs to `logs/psd_ai-app.log`.
-- `update_windows.bat` owns the tested Windows Docker update flow.
+- `run.sh` (repo root) requires Python 3.11+, installs the dnf package groups, creates `psd.ai/venv`, installs `requirements.txt` plus the Jarvis extras, runs `setup.py`, starts the hardware-fit local model group and opens the desktop app. `--doctor`, `--repair`, `--update`, `--rebuild`, `--no-voice`, `--no-models`, `--no-app`, `--no-system-deps` and `--skip-numpy-check` are the supported switches; `logs/run.log` is the run log.
+- `psd.ai/install-service.sh` installs `psd_ai-ui.service` as a systemd *user* unit under `~/.config/systemd/user/`, so the engine starts with the login session without root.
+- `packaging/psd-ai.spec` builds the RPM (venv in `/usr/lib/psd.ai`, `%check` runs the pytest suite); `packaging/psd-ai.desktop` and `packaging/psd-ai.metainfo.xml` provide the menu entry and AppStream metadata.
+- `psd.ai/Dockerfile` and `docker-compose.yml` own the container path, and both honour `APP_PORT` so `-e APP_PORT=7900 -p 7900:7900` stays consistent.
 
 ## Scripts And CLI
 
@@ -203,7 +202,7 @@ Run the app for user-facing or integration changes. Unit tests and syntax checks
 
 ## Current Gaps
 
-- Fresh install smoke coverage across Linux native, Docker, macOS native/app, Windows native, WSL/Git Bash, missing Node/npm, missing Chroma service, and GPU overlays remains a roadmap item.
+- Fresh install smoke coverage across Fedora native, Docker, missing Node/npm, missing Chroma service, and GPU overlays remains a roadmap item.
 - There is no frontend build/type-check/npm test pipeline.
 - CI now covers Python compile, first-party JS syntax, focused-test guidance,
   and pytest smoke; it does not cover Docker compose validation, launcher smoke

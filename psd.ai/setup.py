@@ -94,7 +94,7 @@ def create_default_admin():
         print("  [skip] auth.json already exists")
         return "exists"
 
-    # Desktop app (run.bat / Tauri shell): the GUI shows its own first-run
+    # Desktop app (run.sh / Tauri shell): the GUI shows its own first-run
     # "create admin account" screen, so leave auth.json absent instead of
     # inventing a random password nobody can see.
     if os.getenv("PSD_AI_DEFER_ADMIN", "").strip().lower() in ("1", "true", "yes"):
@@ -147,13 +147,15 @@ def create_default_admin():
                 print(f"        ** Change it after first login. Set PSD_AI_ADMIN_PASSWORD to choose your own. **")
         return "created"
     except ImportError as e:
-        if "incompatible architecture" in str(e).lower():
+        if "incompatible architecture" in str(e).lower() or "wrong ELF class" in str(e):
             # bcrypt is present but built for the wrong CPU architecture — the
-            # same Apple Silicon mismatch check_arch() guards against, caught here
-            # for the rarer case of an x86 wheel inside an arm64 venv.
+            # same mismatch check_arch() guards against, caught here for the
+            # rarer case of an x86_64 wheel inside an aarch64 venv (or a venv
+            # built under qemu-user emulation).
             print("  [error] bcrypt loaded with the wrong CPU architecture.")
-            print("          Rebuild the venv with an arm64 Python:")
-            print("            rm -rf venv && /opt/homebrew/bin/python3.11 -m venv venv")
+            print("          Rebuild the venv with this machine's own Python:")
+            print("            sudo dnf install python3 python3-devel gcc")
+            print("            rm -rf venv && python3 -m venv venv")
             print("            ./venv/bin/pip install -r requirements.txt")
             return "skipped"
         print("  [warn] bcrypt not installed — skipping admin user creation")
@@ -191,56 +193,76 @@ def check_deps():
     else:
         print("  [ok] All core dependencies installed")
 
-    if os.name != "nt" and shutil.which("tmux") is None:
-        print("\n  [warn] tmux not found")
-        print("         Cookbook uses tmux for background downloads and model serves.")
-        print("         Install it with your OS package manager, for example:")
-        if sys.platform == "darwin":
-            print("           brew install tmux")
-        else:
-            print("           sudo apt install tmux")
-            print("           sudo pacman -S tmux")
-            print("           sudo dnf install tmux")
-    elif os.name != "nt":
-        print("  [ok] tmux installed")
+    # Fedora is the target, so the dnf line comes first and the rest are only
+    # there for people running this on a derivative.
+    missing_tools = [
+        name for name in ("tmux", "git", "gcc", "make")
+        if shutil.which(name) is None
+    ]
+    if missing_tools:
+        print(f"\n  [warn] Missing system tools: {', '.join(missing_tools)}")
+        print("         tmux runs Cookbook downloads and model serves in the")
+        print("         background; gcc/make build any wheel that ships no binary.")
+        print(f"           sudo dnf install {' '.join(missing_tools)}")
+        print("         (Debian/Ubuntu: sudo apt install "
+              f"{' '.join(missing_tools)})")
+    else:
+        print("  [ok] tmux, git, gcc and make installed")
+
+    if shutil.which("dnf") is None:
+        print("  [note] no dnf on PATH: this project targets Fedora, so package")
+        print("         hints elsewhere in the output may need translating.")
+
+
+# ELF e_machine values we care about (see /usr/include/elf.h).
+_ELF_MACHINES = {
+    3: "x86", 8: "mips", 40: "arm", 62: "x86_64", 183: "aarch64",
+    243: "riscv", 247: "bpf",
+}
+
+
+def _elf_machine(path):
+    """CPU architecture an ELF binary was built for, or None if unreadable."""
+    try:
+        with open(path, "rb") as handle:
+            header = handle.read(20)
+        if header[:4] != b"\x7fELF":
+            return None
+        endian = ">" if header[5] == 2 else "<"
+        return _ELF_MACHINES.get(int.from_bytes(header[18:20], endian))
+    except (OSError, IndexError, ValueError):
+        return None
 
 
 def check_arch():
-    """Stop early, with guidance, if we're on Apple Silicon but running an
-    Intel (x86_64) Python through Rosetta.
+    """Stop early if the interpreter's CPU architecture is not this machine's.
 
-    A venv built with such an interpreter installs and loads compiled packages
-    (bcrypt, pydantic-core, onnxruntime, …) for the wrong CPU architecture, then
-    dies deep inside an import with a cryptic
-    "(mach-o file, but is an incompatible architecture)" error. Catching it here
-    turns that into one clear, actionable message.
+    On Linux this happens in two real situations: a venv built from a foreign
+    interpreter (an x86_64 Python pulled into an aarch64 container, or the
+    other way round) and a box running the interpreter through qemu-user
+    emulation. Either way, compiled wheels — bcrypt, pydantic-core,
+    onnxruntime, llama-cpp-python — are fetched for the wrong architecture and
+    then fail deep inside an import with "wrong ELF class" or a segfault.
+    Catching it here turns that into one clear message with the fix.
     """
-    if sys.platform != "darwin" or platform.machine() == "arm64":
-        return  # Not macOS, or already an arm64-native interpreter — nothing to do.
+    kernel_arch = platform.machine()
+    exe = sys.executable or ""
+    binary_arch = _elf_machine(exe) if exe else None
+    if not binary_arch or binary_arch == kernel_arch:
+        return  # Native, or not an ELF we can read — nothing to warn about.
 
-    # platform.machine() == "x86_64": either a genuine Intel Mac (fine) or an x86
-    # interpreter running under Rosetta on Apple Silicon (the case we must catch).
-    try:
-        translated = subprocess.run(
-            ["sysctl", "-n", "sysctl.proc_translated"],
-            capture_output=True, text=True, timeout=5,
-        ).stdout.strip()
-    except Exception:
-        translated = ""
-    if translated != "1":
-        return  # Genuine Intel Mac — carry on.
-
-    print("\n  [error] This is an Apple Silicon Mac, but setup is running under an")
-    print("          Intel (x86_64) Python through Rosetta. Compiled packages would")
-    print('          load as the wrong architecture and crash with "incompatible')
-    print('          architecture" later on.')
-    print("\n          Rebuild the environment with Homebrew's arm64 Python:")
-    print("            brew install python@3.11          # if you don't have it yet")
+    print("\n  [error] This machine is " + kernel_arch + ", but setup is running")
+    print("          a " + binary_arch + " Python (" + exe + ").")
+    print('          Compiled packages would be installed for the wrong')
+    print('          architecture and fail later with "wrong ELF class" or a')
+    print("          segfault.")
+    print("\n          Rebuild the environment with this machine's own Python:")
+    print("            sudo dnf install python3 python3-devel gcc make")
     print("            rm -rf venv")
-    print("            /opt/homebrew/bin/python3.11 -m venv venv")
+    print("            python3 -m venv venv")
     print("            ./venv/bin/pip install -r requirements.txt")
     print("            ./venv/bin/python setup.py")
-    print("\n          Tip: ./start-macos.sh does all of this with the right Python.\n")
+    print("\n          Tip: ./run.sh does all of this with the right Python.\n")
     sys.exit(1)
 
 
@@ -256,8 +278,8 @@ def main():
     from dotenv import load_dotenv
     load_dotenv(os.path.join(BASE_DIR, ".env"), encoding="utf-8-sig")
 
-    # Fail fast with a clear message if the CPU architecture is wrong (Apple
-    # Silicon under an x86/Rosetta Python) before importing anything native.
+    # Fail fast with a clear message if the interpreter's CPU architecture is
+    # not this machine's, before importing anything native.
     check_arch()
 
     print("1. Creating directories...")
@@ -287,12 +309,17 @@ def main():
         admin_status = "failed"
 
     print("\n=== Setup complete ===")
-    # start-macos.sh launches the server itself (on its own port) right after
-    # this, so suppress the manual hint there to avoid a contradictory URL.
+    # run.sh launches the server itself (on its own port) right after this, so
+    # suppress the manual hint there to avoid a contradictory URL.
     if not os.getenv("PSD_AI_SKIP_RUN_HINT"):
-        print(f"\nLaunch the desktop app with run.bat (Windows) or, from desktop/:")
-        print(f"  npm run tauri dev")
-        print(f"\nHeadless / server use: python -m uvicorn app:app --host 127.0.0.1 --port 7000")
+        print("\nStart everything (deps, local model, server, desktop app):")
+        print("  ./run.sh")
+        print("\nDesktop shell on its own, from desktop/:")
+        print("  npm run tauri dev")
+        print("\nHeadless / server use:")
+        print("  ./venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 7000")
+        print("\nRun at login as your own user:")
+        print("  ./install-service.sh && systemctl --user start psd-ai-ui")
 
     # Cleaned, action-focused final instruction strings
     if admin_status == "deferred":

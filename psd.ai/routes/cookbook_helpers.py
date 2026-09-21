@@ -3,7 +3,6 @@ Extracted from cookbook_routes.py; the routes module imports the symbols it need
 
 import json
 import logging
-import ntpath
 import os
 import posixpath
 import re
@@ -51,15 +50,6 @@ _GPU_LIST_RE = re.compile(r"^\d+(?:,\d+)*$")
 # command-build time. (Drive letters stay ASCII: ``[A-Za-z]:``.)
 _LOCAL_DIR_RE = re.compile(r"^~?(?:/[\w. -]*)+$|^~$")
 _WINDOWS_LOCAL_DIR_RE = re.compile(r"^[A-Za-z]:[\\/](?:[\w. -]+(?:[\\/][\w. -]+)*[\\/]?)?$")
-_WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
-
-
-def _git_bash_path(path: str) -> str:
-    m = re.match(r"^([A-Za-z]):[\\/](.*)$", path)
-    if not m:
-        return path
-    drive, rest = m.groups()
-    return f"/{drive.lower()}/{rest.replace(chr(92), '/')}"
 
 
 def _validate_repo_id(v: str | None) -> str:
@@ -158,16 +148,13 @@ def _local_tooling_path_export(executable: str) -> str:
     macOS, where the `pip --user` self-heal also misses (`pip` isn't a command,
     only `pip3`/`python3 -m pip`). Local runs only; meaningless over SSH.
     """
-    # This builds a bash snippet, so an explicit POSIX absolute path should keep
-    # POSIX semantics even when the app/tests run on Windows. Otherwise
-    # os.path.abspath("/opt/...") would incorrectly turn it into "D:\\opt\\...".
+    # posixpath keeps the snippet POSIX even if a caller hands over an already
+    # absolute path: os.path.dirname would be identical here, but the intent is
+    # "this string goes into a bash line", so say it explicitly.
     if executable.startswith("/"):
         bin_dir = posixpath.dirname(executable)
-    elif _WINDOWS_DRIVE_PATH_RE.match(executable):
-        bin_dir = ntpath.dirname(executable)
     else:
         bin_dir = os.path.dirname(os.path.abspath(executable))
-    bin_dir = _git_bash_path(bin_dir)
     # Escape for a double-quoted context: $PATH must still expand, but spaces
     # and shell metacharacters in the path must be preserved literally.
     esc = (
@@ -238,7 +225,6 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
     exit code is preserved (no ``| tail`` masking) and the last 5 lines of
     pip output appear in the Cookbook log on failure.
     """
-    from core.platform_compat import IS_WINDOWS
     upgrade_flag = " -U" if upgrade else ""
     # Shell-quote the package spec: an extras spec like ``llama-cpp-python[server]``
     # contains brackets that bash would treat as a glob, so it must be quoted
@@ -1202,41 +1188,6 @@ def _safe_env_prefix(ep: str | None) -> str | None:
         path = "$HOME"
     path = path.replace('"', '\\"')
     return f'[ -f "{path}" ] && source "{path}" || true'
-
-
-def _local_windows_bash_env_prefix(ep: str | None) -> str | None:
-    """Convert a frontend PowerShell venv prefix for the local Git Bash runner."""
-    if not ep:
-        return ep
-
-    prefix = ep.strip()
-    if not prefix.startswith("&"):
-        return ep
-
-    raw_path = prefix[1:].lstrip()
-    if not raw_path:
-        return ep
-    if raw_path.startswith("'"):
-        if len(raw_path) < 2 or not raw_path.endswith("'"):
-            return ep
-        quoted_path = raw_path[1:-1]
-        if "'" in quoted_path.replace("''", ""):
-            return ep
-        path = quoted_path.replace("''", "'")
-    else:
-        path = raw_path.rstrip()
-        if "'" in path or '"' in path:
-            return ep
-    if any(c in path for c in "\r\n;&|`$<>"):
-        return ep
-    if not path.replace("\\", "/").casefold().endswith("/scripts/activate.ps1"):
-        return ep
-
-    bash_path = _git_bash_path(path)
-    if "\\" in bash_path:
-        return ep
-    bash_path = bash_path[: -len("Activate.ps1")] + "activate"
-    return "source " + shlex.quote(bash_path)
 
 
 def _ssh_ps(host, script_path, port=None):

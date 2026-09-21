@@ -19,7 +19,7 @@ This spec covers current app runtime wiring in:
   `routes/admin_wipe/`, `routes/cleanup/`, `routes/compare/`, `routes/contacts/`, `routes/document/`, `routes/gallery/`, `routes/history/`, `routes/mcp/`, `routes/memory/`, `routes/note/`, `routes/research/`, `routes/search/`, `routes/task/`, `routes/vault/`, and `routes/webhook/` packages plus top-level compatibility shims;
 - `routes/prefs_routes.py`, `routes/workspace_routes.py`, and `companion/routes.py`;
 - `src/generated_images.py` for generated-media file resolution;
-- `launcher.py`, `psd.ai.spec`, and platform launcher scripts where frozen/native startup changes runtime paths;
+- `run.sh`, `psd.ai/install-service.sh` and `packaging/psd-ai.spec`, where the Fedora launcher, the systemd user unit and the RPM layout choose the data directory (source `data/`, or `PSD_AI_DATA_DIR` for a read-only install);
 - static entrypoints in `static/index.html`, `static/login.html`, and `static/app.js`.
 
 ## App Orchestrator
@@ -81,11 +81,11 @@ Shutdown cancels upload cleanup, stops the task scheduler, closes the webhook ma
 
 ## Degraded And Platform Behavior
 
-- On Windows, HuggingFace symlink warnings are disabled so model files copy instead of symlink on network/UNC paths.
-- `.env` is loaded with `utf-8-sig` to tolerate Notepad BOM files.
+- HuggingFace symlinks are disabled (`HF_HUB_DISABLE_SYMLINKS=1` in app.py) so model weights are copied instead of linked: a cache on a different filesystem than the download directory would otherwise leave dangling links, and the warning spam used to hide real failures.
+- `.env` is loaded with `utf-8-sig` to tolerate editors that save a UTF-8 BOM.
 - Auth and middleware path checks use Starlette's application-relative route path, so a deployment mounted under `root_path` keeps segment-aware auth exemptions, timeout policy, and login redirects instead of comparing proxy prefixes as application routes.
 - Process-wide MIME registration forces stable `.js` and `.mjs` types across native platforms.
-- Frozen/PyInstaller builds use `src.runtime_paths` so bundled app assets resolve from the executable payload while persistent data defaults to `~/.psd_ai/data`; normal source runs still default to the repository `data/` directory unless `PSD_AI_DATA_DIR` overrides it.
+- Path resolution in `src.runtime_paths` is a plain directory walk, so a source checkout and the RPM layout (`/usr/lib/psd.ai` with its venv beside it) resolve identically; `PSD_AI_DATA_DIR` moves persistent state out of a read-only install tree.
 - Docker detection in `/api/runtime` selects `host.docker.internal` as the Ollama default inside containers and `127.0.0.1` natively. Compose sets Chroma to `chromadb:8000`; native Chroma defaults live in `src/chroma_client.py`.
 - `src.host_docker_access` treats host Docker access from inside the container as opt-in. Default Compose does not mount `/var/run/docker.sock`; `docker/host-docker.yml` plus `PSD_AI_ENABLE_HOST_DOCKER=true` are required before local container code considers the host Docker daemon available.
 - Chroma-backed consumers degrade independently: personal-doc RAG can return route-level 503s, semantic memory vectors can be dropped from chat/memory wiring, and the tool index can fall back when vector retrieval is unavailable.

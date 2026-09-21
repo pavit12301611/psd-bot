@@ -86,7 +86,7 @@ def test_vllm_route_strips_swap_space_when_runtime_rejects_it():
     assert "eval \"$PSD_AI_SERVE_CMD\"" in text
 
 
-def test_local_windows_platform_comes_from_backend_host_state():
+def test_host_platform_comes_from_backend_host_state():
     text = SRC.read_text(encoding="utf-8")
     routes = ROUTES_SRC.read_text(encoding="utf-8")
     running = (SRC.parent / "cookbookRunning.js").read_text(encoding="utf-8")
@@ -100,7 +100,10 @@ def test_local_windows_platform_comes_from_backend_host_state():
     assert "platform: _envState.hostPlatform || ''" in text
     assert "s.platform = _envState.hostPlatform || _envState.platform || '';" not in text
     assert "platform: _envState.hostPlatform || _envState.platform || ''" not in text
-    assert 'return "windows" if IS_WINDOWS else ""' in routes
+    # The host is Linux, and the frontend learns that from the backend rather
+    # than sniffing navigator.platform.
+    assert 'return "linux"' in routes
+    assert "IS_WINDOWS" not in routes
     assert 'env["hostPlatform"] = _client_host_platform()' in routes
     assert "client_state = _state_for_client({})" in routes
     assert 'env.pop("hostPlatform", None)' in routes
@@ -144,22 +147,14 @@ def test_serve_command_preview_uses_selected_target_host():
     assert "if (hostField) hostField.value = f.host;" in text
 
 
-def test_local_windows_llama_server_skips_source_bootstrap():
+def test_local_runner_bootstraps_llama_server_the_same_way_everywhere():
+    """No host-specific fork of the llama.cpp bootstrap: tmux + bash is the
+    only local runner, so the source build path is what every local serve gets."""
     routes = ROUTES_SRC.read_text(encoding="utf-8")
 
-    assert 'local_windows_llama_cmd = local_windows and ("llama_cpp" in req.cmd or "llama-server" in req.cmd)' in routes
-    assert 'if ("llama_cpp" in req.cmd or "llama-server" in req.cmd) and not local_windows_llama_cmd:' in routes
-
-
-def test_local_windows_llama_server_path_includes_user_wrapper_and_cuda_builds():
-    routes = (ROOT / "routes/cookbook_routes.py").read_text(encoding="utf-8")
-
-    assert 'if local_windows:' in routes
-    assert (
-        'export PATH="$HOME/bin:$HOME/llama.cpp/build-cuda/bin/Release:'
-        '$HOME/llama.cpp/build/bin/Release:$HOME/llama.cpp/build/bin/Debug:'
-        '$HOME/llama.cpp/build/bin:$PATH"'
-    ) in routes
+    assert "local_windows" not in routes
+    assert 'if "llama_cpp" in req.cmd or "llama-server" in req.cmd:' in routes
+    assert "Native llama-server not found" in routes
 
 
 def test_serve_panel_keeps_row_markup_and_launch_cmd_assignment_executable():

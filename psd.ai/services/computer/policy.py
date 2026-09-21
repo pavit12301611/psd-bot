@@ -90,69 +90,136 @@ ACTION_RISK: Dict[str, ActionRisk] = {
 
 # Substrings that must never appear in a launch target or a process name we
 # are asked to kill. Matched case-insensitively against the raw argument.
+#
+# These are the Fedora/Linux ways to lose a machine. The list is deliberately
+# substring-based rather than a parsed grammar: the goal is to stop the
+# catastrophic command whatever shell quoting or wrapper the model wrapped it
+# in, not to be a general command validator.
 _DENY_SUBSTRINGS: Tuple[str, ...] = (
-    "format c:",
-    "format.com",
-    "diskpart",
-    "bcdedit",
-    "bootrec",
-    "cipher /w",
-    "del /f /s",
-    "del /s /q c:\\windows",
+    # Recursive deletion of something that is not a project directory.
     "rm -rf /",
     "rm -rf /*",
     "rm -rf ~",
     "rm -rf /home",
+    "rm -fr /",
+    "find / -delete",
+    "find / -exec rm",
+    # Filesystems, partitions and volumes.
     "mkfs",
-    ":(){ ",              # fork bomb
+    "wipefs",
+    "fdisk",
+    "parted",
+    "sgdisk --zap-all",
     "dd if=",
+    "dd of=/dev/",
+    "shred /dev/",
+    "lvremove",
+    "vgremove",
+    "pvremove",
+    "cryptsetup luksformat",
+    "cryptsetup lukserase",
+    "mdadm --zero-superblock",
+    ":(){ ",              # fork bomb
+    # Power state: loses unsaved work in every other application.
     "shutdown",
     "poweroff",
     "reboot",
+    "halt",
     "init 0",
     "init 6",
-    "reg delete hklm",
-    "reg delete hkcr",
-    "takeown /f c:\\windows",
-    "icacls c:\\windows",
-    "vssadmin delete",
-    "wmic diskdrive",
+    "systemctl poweroff",
+    "systemctl reboot",
+    "systemctl halt",
+    "loginctl terminate",
+    # Boot loader, kernel and firmware: a mistake here does not boot again.
+    "grubby",
+    "grub2-install",
+    "grub2-mkconfig",
+    "grub-mkconfig",
+    "efibootmgr",
+    "mokutil",
+    "flashrom",
+    "fwupdmgr",
+    "rpm -e kernel",
+    "dnf remove kernel",
+    "dnf erase kernel",
+    # Security downgrade: SELinux is the one thing keeping a compromised
+    # agent process away from the rest of the system.
+    "setenforce 0",
+    "sestatus -b",
+    "sed -i /etc/selinux/config",
+)
+
+# Commands whose danger depends on their arguments, so a substring cannot
+# express them: a *recursive* permission or ownership change aimed at the
+# filesystem root or a top-level system directory. ``chmod -R 755 ~/project``
+# stays allowed — the point is to stop the machine-wide variants
+# (``chown -R nobody /``, ``chmod -R 000 /etc``), not to police a project tree.
+_DENY_PATTERNS: Tuple[re.Pattern, ...] = (
+    re.compile(
+        r"\bch(?:mod|own)\b.*\s-[a-z]*r[a-z]*\s+(?:[^\s]+\s+)?"
+        r"/(?:bin|boot|dev|etc|home|lib|lib64|proc|root|run|sbin|sys|usr|var)?(?:\s|$)",
+        re.IGNORECASE,
+    ),
 )
 
 # Paths the assistant must never touch through the `open` (shell-execute)
 # action — deleting or "opening" these is never a legitimate assistant task.
+# On Fedora several of these are symlinks into /usr, so both the traditional
+# root and the merged-/usr layout are covered.
 _DENY_PATH_RE = re.compile(
     r"^("
-    r"[a-z]:[\\/]?(windows|winnt|system32|system volume information|\\\?\?)"
-    r"|/(bin|boot|dev|etc|lib|proc|sbin|sys|usr|var)(/|$)"
-    r"|[a-z]:[\\/]$"
+    r"/(bin|boot|dev|etc|lib|lib64|proc|root|run|sbin|sys|usr|var)(/|$)"
+    r"|/(lost\+found)(/|$)"
     r")",
     re.IGNORECASE,
 )
 
-# Processes psd.ai must never kill: doing so would kill its own engine or the
-# desktop shell and leave the owner with a broken session.
+# Processes psd.ai must never kill: doing so would kill its own engine, the
+# desktop shell, the session's audio/input plumbing, or PID 1 — and leave the
+# owner with a broken session they have to reboot out of.
 _SELF_GUARD_NAMES: FrozenSet[str] = frozenset(
     {
+        # psd.ai itself, and the model server it launched.
         "python",
-        "pythonw",
+        "python3",
+        "uvicorn",
+        "psd-ai",
         "psd-ai-desktop",
         "psd.ai",
-        "explorer",
-        "csrss",
-        "wininit",
-        "winlogon",
-        "services",
-        "smss",
-        "lsass",
-        "system",
-        "launchd",
+        "llama-server",
+        "ydotoold",
+        # PID 1 and the session manager.
         "init",
         "systemd",
-        "finder",
-        "dwm",
-        "shellexperiencehost",
-        "sihost",
+        "dbus-daemon",
+        "dbus-broker",
+        "gdm",
+        "gdm-x-session",
+        "gdm-wayland-session",
+        "sddm",
+        "lightdm",
+        "polkitd",
+        "logind",
+        # Compositors / window managers: killing one ends the graphical session.
+        "gnome-shell",
+        "gnome-session-binary",
+        "mutter",
+        "plasmashell",
+        "kwin_wayland",
+        "kwin_x11",
+        "sway",
+        "hyprland",
+        "xorg",
+        "xwayland",
+        # Audio and notifications the voice mode depends on.
+        "pipewire",
+        "pipewire-pulse",
+        "wireplumber",
+        "pulseaudio",
+        # Network: killing this strands a remote session.
+        "networkmanager",
+        "sshd",
     }
 )
 
@@ -177,6 +244,9 @@ def is_denied_target(target: Any) -> bool:
     low = raw.lower()
     for bad in _DENY_SUBSTRINGS:
         if bad in low:
+            return True
+    for pattern in _DENY_PATTERNS:
+        if pattern.search(raw):
             return True
     # Path-shaped targets: reject OS directories and drive roots.
     candidate = raw.replace('"', "").replace("'", "").strip()
@@ -246,6 +316,14 @@ def check_action(
 def describe_policy() -> Dict[str, Any]:
     """Machine-readable policy summary for /api/jarvis/status and the UI."""
 
+    session = (os.environ.get("XDG_SESSION_TYPE") or "").strip().lower()
+    if not session:
+        # A service started by systemd may not carry the variable; infer it the
+        # same way the rest of the app does. Reading the environment (and not
+        # /proc) keeps this function I/O-free.
+        session = "wayland" if os.environ.get("WAYLAND_DISPLAY") else (
+            "x11" if os.environ.get("DISPLAY") else ""
+        )
     return {
         "read_only": sorted(READ_ONLY_ACTIONS),
         "write": sorted(WRITE_ACTIONS),
@@ -254,5 +332,7 @@ def describe_policy() -> Dict[str, Any]:
         "denied_targets": list(_DENY_SUBSTRINGS),
         "protected_processes": sorted(_SELF_GUARD_NAMES),
         "platform": sys.platform,
-        "windows": os.name == "nt",
+        "os": "linux",
+        "session": session,
+        "package_manager": "dnf",
     }

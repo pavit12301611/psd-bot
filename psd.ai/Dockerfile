@@ -109,5 +109,13 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 
 EXPOSE 7000
 
+# APP_PORT is read by app.py, src/mcp_oauth.py (OAuth callback URL),
+# internal_api_base() and companion pairing. Declaring it here and expanding it
+# in the CMD keeps a container started with `-e APP_PORT=7900 -p 7900:7900`
+# consistent: without this the app would advertise callbacks on 7000 while
+# uvicorn listens on 7900, and every OAuth flow would silently dead-end.
+ENV APP_PORT=7000
+
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7000"]
+# Shell form so ${APP_PORT} expands; exec form would pass the literal string.
+CMD uvicorn app:app --host 0.0.0.0 --port "${APP_PORT:-7000}"

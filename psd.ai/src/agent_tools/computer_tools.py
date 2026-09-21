@@ -1,14 +1,17 @@
 """computer_tools.py — drive the local desktop from agent mode.
 
 Exposes the same allow-listed action set the voice agent uses
-(``services/computer``) as an agent tool, so "open Notepad and type this"
-works from a typed chat as well as from a spoken one.
+(``services/computer``) as an agent tool, so "open Firefox and type this"
+works from a typed chat as well as from a spoken one. Targets are resolved
+on a Fedora desktop, so the familiar aliases still work: "notepad" opens
+the text editor, "explorer" opens Files, "task manager" opens System
+Monitor.
 
 The tool takes a single JSON object::
 
-    {"action": "open", "params": {"target": "notepad"}}
+    {"action": "open", "params": {"target": "firefox"}}
 
-and a bare ``open notepad`` line is accepted too, because small local models
+and a bare ``open firefox`` line is accepted too, because small local models
 like to emit that shape instead.
 """
 
@@ -107,7 +110,7 @@ class ComputerControlTool:
             return {
                 "error": (
                     "computer_control needs JSON like "
-                    '{"action": "open", "params": {"target": "notepad"}}. '
+                    '{"action": "open", "params": {"target": "firefox"}}. '
                     "Use the screenshot or windows action first if you need to "
                     "see what is on screen."
                 ),

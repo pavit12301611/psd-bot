@@ -32,16 +32,46 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "rpm",
+      "appimage"
+    ],
+    "category": "Utility",
+    "shortDescription": "Local-first AI assistant with offline models, voice and PC control",
+    "longDescription": "psd.ai runs a group of local GGUF models through llama.cpp and gives an agent shell, a cookbook for serving models, memory, RAG, calendar and email tools, plus allow-listed desktop control on Wayland and X11. Nothing leaves the machine unless you configure a remote provider.",
+    "homepageUrl": "https://github.com/pavit12301611/psd-bot",
+    "license": "MIT",
+    "publisher": "psd.ai",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
-      "icons/icon.ico",
       "icons/icon.png"
     ],
-    "windows": {
-      "nsis": { "installMode": "currentUser" }
+    "linux": {
+      "rpm": {
+        "release": "1",
+        "epoch": 0,
+        "depends": [
+          "python3 >= 3.11",
+          "tmux",
+          "xdg-utils",
+          "libnotify"
+        ]
+      },
+      "deb": {
+        "depends": [
+          "python3",
+          "tmux",
+          "xdg-utils",
+          "libnotify-bin"
+        ]
+      },
+      "appimage": {
+        "bundleMediaFramework": false,
+        "files": {}
+      }
     }
-  }
+  },
+  "mainBinaryName": "psd-ai"
 }

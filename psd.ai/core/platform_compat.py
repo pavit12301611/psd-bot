@@ -1,56 +1,65 @@
-"""Cross-platform OS compatibility helpers.
+"""Linux OS compatibility helpers.
 
-psd.ai began as a Linux/macOS/Docker-only app. This module centralizes the
-small set of OS differences needed to run it *natively* on Windows so the rest
-of the codebase can stay platform-agnostic. Import from here instead of
-sprinkling ``os.name == "nt"`` checks (and POSIX-only calls) across modules.
+psd.ai is a Linux application: it is developed and shipped against Fedora
+Workstation, and everything that touches the operating system goes through this
+module so the rest of the codebase stays free of ``sys.platform`` checks and
+inline shell quoting.
+
+The helpers fall into three groups:
+
+  * **POSIX process and file primitives** — detach, liveness, teardown,
+    permission bits. These are the calls that a web framework does not provide
+    and that every caller used to reinvent slightly differently.
+  * **Tool resolution** — ``which_tool``/``find_bash``, cached, so a missing
+    binary is reported once with a ``dnf`` hint instead of raising from deep
+    inside a request handler.
+  * **Session introspection** — Wayland vs X11, the desktop environment,
+    SELinux mode, Flatpak/toolbox confinement, and whether the OS is an
+    immutable (rpm-ostree) Fedora. Desktop automation behaves very differently
+    across those, so it is asked about here rather than guessed at per call
+    site.
 
 Design rules:
-  * Stdlib + ctypes only — no new third-party deps (no psutil/pywinpty).
-  * POSIX behaviour is unchanged; Windows gets a faithful equivalent or a
-    safe, documented no-op.
+  * Stdlib only — no new third-party deps (no psutil).
+  * Nothing in here raises for a missing tool or an unreadable ``/proc`` file:
+    callers get ``None``/``False`` and decide how to degrade.
 """
 
 from __future__ import annotations
 
 import os
-import ntpath
-import shutil
-import subprocess
-from pathlib import Path
-import sys
-from typing import List, Optional
 import platform
+import shutil
+import signal
+import subprocess
+import sys
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Sequence
 
-IS_WINDOWS = os.name == "nt"
-IS_POSIX = not IS_WINDOWS
-# Allows APFEL support and ARM-native binary recommendations on Apple Silicon Macs.
-IS_APPLE_SILICON = (
-    IS_POSIX
-    and platform.system() == "Darwin"
-    and platform.machine().lower()
-    in {
-        "arm64",
-        "aarch64",
-    }
-)
+IS_LINUX = sys.platform.startswith("linux")
+IS_POSIX = os.name == "posix"
+
+# Kept as module constants because a few callers still branch on the shape of
+# the machine (ARM64 Fedora on a GB10/Strix Halo box plans models differently
+# from x86_64).
+IS_ARM64 = platform.machine().lower() in {"aarch64", "arm64"}
+IS_X86_64 = platform.machine().lower() in {"x86_64", "amd64"}
 
 
 # ── File permissions ────────────────────────────────────────────────────────
 def safe_chmod(path, mode: int) -> bool:
-    """``os.chmod`` that is a harmless no-op on Windows.
+    """``os.chmod`` that never raises.
 
-    On POSIX we apply the mode — used to lock secret/key files down to 0o600.
-    Windows has no POSIX permission bits; files under the user profile are
-    already ACL-restricted to that user, so we skip rather than raise. Returns
-    True when the mode was actually applied.
+    Used to lock secret/key files and the SQLite database down to 0o600.
+    Returns True when the mode was actually applied — a filesystem that does
+    not support permission bits (some FUSE mounts, a Windows share mounted
+    under /mnt) reports False so the caller can warn instead of silently
+    believing the file is private.
     """
-    if IS_WINDOWS:
-        return False
     try:
         os.chmod(path, mode)
         return True
-    except OSError:
+    except (OSError, NotImplementedError):
         return False
 
 
@@ -59,122 +68,186 @@ def detached_popen_kwargs() -> dict:
     """Keyword args for :class:`subprocess.Popen` that fully detach a child so
     it outlives the request/stream that launched it.
 
-    POSIX: ``start_new_session=True`` (setsid) — new session + process group.
-    Windows: ``CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS`` — the child gets
-    its own process group (so it isn't killed when the parent's console closes)
-    and is detached from any console.
+    ``start_new_session=True`` is setsid: the child gets its own session and
+    process group, so it survives the caller's terminal closing and — more
+    importantly for this codebase — the whole tree can later be signalled with
+    :func:`kill_process_tree`.
     """
-    if IS_WINDOWS:
-        flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200) | getattr(
-            subprocess, "DETACHED_PROCESS", 0x00000008
-        )
-        return {"creationflags": flags}
     return {"start_new_session": True}
 
 
 def pid_alive(pid: Optional[int]) -> bool:
     """True if a process with ``pid`` is currently running.
 
-    POSIX uses the classic ``os.kill(pid, 0)`` probe. That is **unsafe on
-    Windows**: CPython's ``os.kill`` calls ``TerminateProcess(handle, sig)`` for
-    any signal other than CTRL_C/CTRL_BREAK, so ``os.kill(pid, 0)`` would *kill*
-    the process it is checking. We instead open the process and read its exit
-    code via the Win32 API.
+    ``os.kill(pid, 0)`` is the POSIX liveness probe: it performs the permission
+    and existence checks without delivering a signal. ESRCH means "no such
+    process"; EPERM means it exists but belongs to someone else, which still
+    counts as alive.
+
+    A signal check alone is not enough on Linux: a child nobody has reaped
+    stays in the process table as a zombie, keeps its PID, and answers
+    ``kill(pid, 0)`` happily. Every long-lived child this app launches is a
+    ``Popen`` object that outlives the request which started it, so treating a
+    zombie as alive would report a finished background job (or a stopped model
+    server) as running forever. :func:`_is_zombie` closes that hole.
     """
     if not pid:
         return False
-    if IS_WINDOWS:
-        import ctypes
-        from ctypes import wintypes
-
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        STILL_ACTIVE = 259
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid)
-        )
-        if not handle:
-            return False
-        try:
-            code = wintypes.DWORD()
-            if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
-                return code.value == STILL_ACTIVE
-            return False
-        finally:
-            kernel32.CloseHandle(handle)
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
     try:
         os.kill(pid, 0)
-        return True
-    except (OSError, ProcessLookupError):
+    except ProcessLookupError:
         return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return not _is_zombie(pid)
 
 
-def kill_process_tree(pid: Optional[int]) -> None:
+def _is_zombie(pid: int) -> bool:
+    """True when ``pid`` has exited but has not been waited for yet."""
+    try:
+        with open(f"/proc/{pid}/stat", "r", encoding="utf-8", errors="ignore") as handle:
+            data = handle.read()
+    except OSError:
+        # No procfs (or the pid vanished between the two calls): not a zombie.
+        return False
+    # Field 3 is the state character. Field 2 (comm) is parenthesised and may
+    # itself contain spaces and parentheses — "sleep (weird name)" — so split
+    # after the LAST ')' rather than on whitespace.
+    tail = data.rsplit(")", 1)[-1].split()
+    return bool(tail) and tail[0] == "Z"
+
+
+def kill_process_tree(pid: Optional[int], timeout: float = 3.0) -> None:
     """Terminate ``pid`` and all of its descendants.
 
-    POSIX: signal the whole process group (``killpg``), falling back to a plain
-    ``kill`` if the pid isn't a group leader.
-    Windows: ``taskkill /T /F`` walks and kills the child tree (there is no
-    process-group signalling).
+    Children launched through :func:`detached_popen_kwargs` are process-group
+    leaders, so ``killpg`` reaches the whole tree in one call — that is how a
+    runaway ``llama-server`` (which itself forks) gets stopped. A group that
+    ignores SIGTERM is escalated to SIGKILL after ``timeout`` seconds, because
+    a stuck model server holding VRAM blocks the next launch.
     """
     if not pid:
         return
-    if IS_WINDOWS:
-        try:
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(pid)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-        except Exception:
-            pass
-        return
-    import signal
-
+    pid = int(pid)
     try:
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
-    except Exception:
+        group = os.getpgid(pid)
+    except (OSError, ProcessLookupError):
+        group = None
+
+    if group is not None:
         try:
-            os.kill(pid, signal.SIGTERM)
-        except Exception:
+            os.killpg(group, signal.SIGTERM)
+            _wait_for_exit(pid, timeout)
+            if pid_alive(pid):
+                os.killpg(group, signal.SIGKILL)
+                # SIGKILL is delivered asynchronously: without this wait the
+                # caller can go on to bind the port or start the next model
+                # server while the old one is still holding it.
+                _wait_for_exit(pid, 2.0)
+            return
+        except (OSError, ProcessLookupError):
             pass
+
+    # Not a group leader (or the group call was refused): fall back to the
+    # single process. Orphaned grandchildren are not reachable from here, which
+    # is exactly why every long-lived child is started detached.
+    try:
+        os.kill(pid, signal.SIGTERM)
+        _wait_for_exit(pid, timeout)
+        if pid_alive(pid):
+            os.kill(pid, signal.SIGKILL)
+            _wait_for_exit(pid, 2.0)
+    except (OSError, ProcessLookupError):
+        pass
+
+
+def _wait_for_exit(pid: int, timeout: float) -> None:
+    """Poll until ``pid`` is gone or ``timeout`` seconds have passed."""
+    import time
+
+    deadline = time.monotonic() + max(0.0, timeout)
+    while time.monotonic() < deadline:
+        if not pid_alive(pid):
+            return
+        time.sleep(0.1)
 
 
 # ── Shell / executable resolution ───────────────────────────────────────────
 _BASH_CACHE: Optional[str] = None
 _BASH_PROBED = False
+# Probed when bash is not on PATH (a slim container, a stripped-down image).
+_BASH_FALLBACKS = ("/usr/bin/bash", "/bin/bash", "/usr/local/bin/bash")
 
-# Common Git-for-Windows install locations to probe when bash isn't on PATH.
-_WINDOWS_BASH_ROOT_ENV_VARS = (
-    "ProgramFiles",
-    "ProgramW6432",
-    "ProgramFiles(x86)",
-    "LocalAppData",
-)
-_WINDOWS_BASH_DEFAULT_ROOTS = (
-    r"C:\Program Files\Git",
-    r"C:\Program Files (x86)\Git",
-)
-_WINDOWS_BASH_RELATIVE_PATHS = (
-    ("bin", "bash.exe"),
-    ("usr", "bin", "bash.exe"),
-)
-
-# Paths to add to the remote SSH probe command to find tools like nvidia-smi that may not be on PATH.
+# Paths appended to remote SSH probe commands so tools that live outside the
+# default non-interactive PATH (CUDA, vendor drivers) are still found.
 _SSH_PATH_MEMBERS = (
     "/usr/bin",
     "/usr/local/bin",
     "/usr/local/cuda/bin",
-    "/usr/lib/wsl/lib"
+    "/opt/cuda/bin",
 )
-# Fallback locations for nvidia-smi on WSL and other Linux distros where it may not be on PATH.
+# Fallback locations for nvidia-smi where the driver package does not put it on
+# PATH (cuda-toolkit installs, /opt layouts, container images).
 NVIDIA_PATH_CANDIDATES = (
     "/usr/bin/nvidia-smi",
     "/usr/local/bin/nvidia-smi",
     "/usr/local/cuda/bin/nvidia-smi",
-    "/usr/lib/wsl/lib/nvidia-smi",
+    "/opt/cuda/bin/nvidia-smi",
 )
+
+# Fedora package names for the tools psd.ai can use. A missing tool is not an
+# error — the code degrades — but every report should be able to say how to fix
+# it, and "install bash" is not advice a user can act on.
+TOOL_PACKAGES: Dict[str, str] = {
+    "bash": "bash",
+    "ffmpeg": "ffmpeg (RPM Fusion)",
+    "ffprobe": "ffmpeg (RPM Fusion)",
+    "git": "git",
+    "tmux": "tmux",
+    "notify-send": "libnotify",
+    "xdg-open": "xdg-utils",
+    "gio": "gvfs",
+    "wl-copy": "wl-clipboard",
+    "wl-paste": "wl-clipboard",
+    "grim": "grim",
+    "slurp": "slurp",
+    "wtype": "wtype",
+    "ydotool": "ydotool",
+    "xdotool": "xdotool",
+    "wmctrl": "wmctrl",
+    "xclip": "xclip",
+    "xprop": "xprop",
+    "xrandr": "xrandr",
+    "scrot": "scrot",
+    "xsel": "xsel",
+    "slurp": "slurp",
+    "wlr-randr": "wlr-randr",
+    "import": "ImageMagick",
+    "gnome-screenshot": "gnome-screenshot",
+    "gdbus": "glib2",
+    "gtk-launch": "gtk3",
+    "swaymsg": "sway",
+    "hyprctl": "hyprctl",
+    "wpctl": "pipewire-utils",
+    "pactl": "pulseaudio-utils",
+    "amixer": "alsa-utils",
+    "arecord": "alsa-utils",
+    "lspci": "pciutils",
+    "vulkaninfo": "vulkan-tools",
+    "nvidia-smi": "akmod-nvidia / cuda (RPM Fusion)",
+    "dnf": "dnf",
+    "rpm-ostree": "rpm-ostree",
+    "getenforce": "libselinux-utils",
+    "node": "nodejs",
+    "npm": "npm",
+    "cargo": "rust cargo",
+}
 
 
 def _ssh_path_override() -> str:
@@ -185,71 +258,52 @@ def _ssh_path_override() -> str:
 SSH_PATH_OVERRIDE = _ssh_path_override()
 
 
-def _windows_bash_fallbacks() -> List[str]:
-    roots: List[str] = []
-    for env_name in _WINDOWS_BASH_ROOT_ENV_VARS:
-        base = os.environ.get(env_name)
-        if base:
-            roots.append(ntpath.join(base, "Git"))
-            if env_name == "LocalAppData":
-                roots.append(ntpath.join(base, "Programs", "Git"))
-    roots.extend(_WINDOWS_BASH_DEFAULT_ROOTS)
+def which_tool(name: str) -> Optional[str]:
+    """``shutil.which`` with a package hint on failure.
 
-    paths: List[str] = []
-    seen = set()
-    for root in roots:
-        for rel in _WINDOWS_BASH_RELATIVE_PATHS:
-            path = ntpath.join(root, *rel)
-            key = path.lower()
-            if key not in seen:
-                seen.add(key)
-                paths.append(path)
-    return paths
-
-
-def _is_windows_bash_stub(path: str) -> bool:
-    lowered = path.lower()
-    return (
-        "system32\\bash.exe" in lowered
-        or "sysnative\\bash.exe" in lowered
-        or "windowsapps\\bash.exe" in lowered
-    )
-
-
-def git_bash_path(path: str | Path) -> str:
-    """Convert a path to POSIX style suitable for Git Bash on Windows.
-
-    Transforms drive letters (e.g., 'C:\\path') to POSIX '/c/path',
-    and uses forward slashes.
+    Returns the absolute path of an executable on PATH, or None. Callers that
+    want to tell the user how to install what is missing should pair this with
+    :func:`package_for`.
     """
-    p = Path(path)
-    p_str = p.as_posix()
-    if IS_WINDOWS and len(p_str) >= 2 and p_str[1] == ":":
-        drive = p_str[0].lower()
-        return f"/{drive}{p_str[2:]}"
-    return p_str
+    return shutil.which(name)
 
+
+def package_for(tool: str) -> str:
+    """Fedora package that provides ``tool``, or a generic hint."""
+    return TOOL_PACKAGES.get(tool, tool)
+
+
+def missing_tools(names: Iterable[str]) -> List[str]:
+    """The subset of ``names`` that is not on PATH."""
+    return [name for name in names if not which_tool(name)]
+
+
+def dnf_install_hint(tools: Sequence[str]) -> str:
+    """A copy-pasteable ``dnf`` line for the missing tools in ``tools``."""
+    packages = sorted({package_for(t).split(" (")[0] for t in tools})
+    if not packages:
+        return ""
+    return f"sudo dnf install {' '.join(packages)}"
 
 
 def find_bash() -> Optional[str]:
-    """Locate a real ``bash`` interpreter, or None.
+    """Locate ``bash``, or None.
 
-    On Windows this is typically Git Bash / WSL. Many psd.ai features (the
-    agent ``bash`` tool, background jobs, Cookbook scripts) emit bash syntax, so
-    when a bash is present we use it and keep full parity with POSIX. Result is
-    cached.
+    The agent ``bash`` tool, background jobs and Cookbook scripts all emit bash
+    syntax (arrays, ``[[ ]]``, process substitution), so ``sh`` — which is dash
+    on some spins and a restricted bash on others — is only a last resort. On
+    Fedora bash is always present; the fallbacks exist for minimal containers.
+    Result is cached.
     """
     global _BASH_CACHE, _BASH_PROBED
     if _BASH_PROBED:
         return _BASH_CACHE
     _BASH_PROBED = True
     found = which_tool("bash")
-    if found and IS_WINDOWS and _is_windows_bash_stub(found):
-        found = None
-    if not found and IS_WINDOWS:
-        for cand in _windows_bash_fallbacks():
-            if os.path.exists(cand):
-                found = cand
+    if not found:
+        for candidate in _BASH_FALLBACKS:
+            if os.path.exists(candidate) and os.access(candidate, os.X_OK):
+                found = candidate
                 break
     _BASH_CACHE = found
     return found
@@ -259,106 +313,145 @@ def has_bash() -> bool:
     return find_bash() is not None
 
 
-def which_tool(name: str) -> Optional[str]:
-    """``shutil.which`` that also tries Windows executable suffixes.
-
-    On Windows, Node/npm shims are ``npx.cmd``/``npm.cmd`` and binaries end in
-    ``.exe``; a bare ``which("npx")`` can miss them depending on PATHEXT. We try
-    the bare name first, then the common suffixes.
-    """
-    found = shutil.which(name)
-    if found:
-        return found
-    if IS_WINDOWS:
-        for ext in (".cmd", ".exe", ".bat"):
-            found = shutil.which(name + ext)
-            if found:
-                return found
-    return None
-
-
 def run_script_argv(script_path) -> List[str]:
     """argv to execute a shell *script file*.
 
-    Prefers bash (so existing ``.sh`` wrappers work verbatim, including on
-    Windows via Git Bash). On Windows with no bash available, falls back to
-    ``cmd.exe /c`` — simple commands still run, but bash-specific syntax won't.
-    Callers that need guaranteed bash should check :func:`has_bash` first and
-    surface a clear "install Git Bash" message.
+    Prefers bash so ``.sh`` wrappers run with the syntax they were written in,
+    and falls back to ``sh`` in a minimal container.
     """
     bash = find_bash()
     if bash:
         return [bash, str(script_path)]
-    if IS_WINDOWS:
-        comspec = os.environ.get("ComSpec", "cmd.exe")
-        return [comspec, "/c", str(script_path)]
     return ["sh", str(script_path)]
 
 
-def is_wsl() -> bool:
-    """True if running inside Windows Subsystem for Linux (WSL)."""
-    import sys
-    if sys.platform.startswith("linux") or os.name == "posix":
+def posix_path(path) -> str:
+    """Normalise ``path`` to a POSIX string (identity on Linux, kept for the
+    callers that used to convert Windows paths for a bundled bash)."""
+    return Path(path).as_posix()
+
+
+# ── Session / desktop introspection ─────────────────────────────────────────
+def _read_first_line(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+            return handle.readline().strip()
+    except OSError:
+        return ""
+
+
+def _os_release() -> Dict[str, str]:
+    """Parsed ``/etc/os-release`` (empty dict when unavailable)."""
+    values: Dict[str, str] = {}
+    for path in ("/etc/os-release", "/usr/lib/os-release"):
         try:
-            with open("/proc/version", "r", encoding="utf-8", errors="ignore") as f:
-                if "microsoft" in f.read().lower():
-                    return True
-        except Exception:
-            pass
-    return False
+            with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+                for line in handle:
+                    if "=" not in line:
+                        continue
+                    key, _, raw = line.partition("=")
+                    values[key.strip()] = raw.strip().strip('"')
+        except OSError:
+            continue
+        if values:
+            break
+    return values
 
 
-def translate_path(path_str: str) -> str:
-    """Translate a path (possibly a Windows path) to the current OS format.
+def distro_id() -> str:
+    """``fedora``, ``rhel``, ``debian``, ... (lower-case, empty if unknown)."""
+    return _os_release().get("ID", "").lower()
 
-    Particularly handles Windows paths (e.g. C:\\foo or C:/foo) when running
-    under WSL, translating them to /mnt/c/foo.
-    Also handles standard path normalization to avoid string breakages.
+
+def distro_like() -> List[str]:
+    """``ID_LIKE`` entries, e.g. ``["fedora"]`` on a Nobara/Asahi remix."""
+    raw = _os_release().get("ID_LIKE", "")
+    return [item for item in raw.split() if item]
+
+
+def is_fedora_family() -> bool:
+    """True on Fedora and on the distros that share its package manager."""
+    return distro_id() == "fedora" or "fedora" in distro_like() or "rhel" in distro_like()
+
+
+def distro_pretty_name() -> str:
+    return _os_release().get("PRETTY_NAME") or platform.platform()
+
+
+def is_immutable_os() -> bool:
+    """True on Fedora Atomic (Silverblue/Kinoite/Sericea) and friends.
+
+    ``/usr`` is read-only there, so ``dnf install`` cannot work and packages
+    must come from ``rpm-ostree`` or a toolbox/distrobox container. Installers
+    check this before promising the user a dnf command that will fail.
     """
-    if not path_str:
-        return path_str
-
-    if is_wsl():
-        path_str = path_str.replace("\\", "/")
-        import re
-        m = re.match(r"^([a-zA-Z]):(.*)", path_str)
-        if m:
-            drive = m.group(1).lower()
-            rest = m.group(2)
-            if not rest.startswith("/"):
-                rest = "/" + rest
-            return f"/mnt/{drive}{rest}"
-
-    try:
-        return str(Path(path_str).resolve())
-    except Exception:
-        return path_str
+    return os.path.exists("/run/ostree-booted")
 
 
-def get_wsl_windows_user_profile() -> Optional[str]:
-    """Retrieve the Windows host User Profile path from inside WSL."""
-    if not is_wsl():
-        return None
-    try:
-        r = run_wsl_windows_powershell("Write-Output $env:USERPROFILE", timeout=5)
-        if r.returncode == 0 and r.stdout.strip():
-            return translate_path(r.stdout.strip())
-    except Exception:
-        pass
-
-    try:
-        users_dir = "/mnt/c/Users"
-        if os.path.isdir(users_dir):
-            for entry in os.listdir(users_dir):
-                if entry not in ("All Users", "Default", "Default User", "desktop.ini", "Public"):
-                    path = os.path.join(users_dir, entry)
-                    if os.path.isdir(path):
-                        return path
-    except Exception:
-        pass
-    return None
+def is_flatpak() -> bool:
+    """True when running inside a Flatpak sandbox (``/.flatpak-info``)."""
+    return os.path.exists("/.flatpak-info")
 
 
+def is_container() -> bool:
+    """True inside Docker/Podman/toolbox — no desktop session, no PC control."""
+    if os.path.exists("/run/.containerenv"):
+        return True
+    if is_flatpak():
+        return True
+    cgroup = _read_first_line("/proc/1/cgroup")
+    if any(tag in cgroup for tag in ("docker", "podman", "containerd", "libpod")):
+        return True
+    # toolbox/distrobox set this in the environment of the container.
+    return bool(os.environ.get("container") or os.environ.get("DISTROBOX_CONTAINER_ID"))
+
+
+def session_type() -> str:
+    """``"wayland"``, ``"x11"``, or ``"tty"``/``""`` when unknown."""
+    value = (os.environ.get("XDG_SESSION_TYPE") or "").strip().lower()
+    if value:
+        return value
+    # A nested/remote session may not export it; Wayland always sets this.
+    if os.environ.get("WAYLAND_DISPLAY"):
+        return "wayland"
+    if os.environ.get("DISPLAY"):
+        return "x11"
+    return ""
+
+
+def is_wayland() -> bool:
+    return session_type() == "wayland"
+
+
+def desktop_environment() -> str:
+    """``"gnome"``, ``"kde"``, ``"sway"``, ... (lower-case, empty if unknown)."""
+    raw = (os.environ.get("XDG_CURRENT_DESKTOP") or os.environ.get("DESKTOP_SESSION") or "")
+    return raw.split(":")[0].strip().lower()
+
+
+def selinux_mode() -> str:
+    """``"enforcing"``, ``"permissive"``, ``"disabled"``, or ``""`` if unknown."""
+    mode = _read_first_line("/sys/fs/selinux/enforce")
+    if mode in ("0", "1"):
+        return "enforcing" if mode == "1" else "permissive"
+    getenforce = which_tool("getenforce")
+    if getenforce:
+        try:
+            out = subprocess.run(
+                [getenforce], capture_output=True, text=True, timeout=5
+            ).stdout.strip().lower()
+            if out:
+                return out
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return ""
+
+
+def is_selinux_enforcing() -> bool:
+    return selinux_mode() == "enforcing"
+
+
+# ── SSH helpers ─────────────────────────────────────────────────────────────
 def _ssh_exec_argv(
     remote: str,
     ssh_port: str | None,
@@ -414,39 +507,4 @@ def run_ssh_command(
         timeout=timeout,
         capture_output=True,
         text=text,
-    )
-
-
-def _windows_powershell_argv(
-    command: str,
-    *,
-    no_profile: bool = True,
-    non_interactive: bool = True,
-) -> List[str]:
-    argv: List[str] = ["powershell.exe"]
-    if no_profile:
-        argv.append("-NoProfile")
-    if non_interactive:
-        argv.append("-NonInteractive")
-    argv.extend(["-Command", command])
-    return argv
-
-
-def run_wsl_windows_powershell(
-    command: str,
-    *,
-    timeout: float = 5,
-) -> subprocess.CompletedProcess[str]:
-    """Run a PowerShell command on the Windows host from WSL.
-
-    Raises ``RuntimeError`` when called outside WSL.
-    """
-
-    if not is_wsl():
-        raise RuntimeError("run_wsl_windows_powershell is only supported in WSL")
-    return subprocess.run(
-        _windows_powershell_argv(command),
-        capture_output=True,
-        text=True,
-        timeout=timeout,
     )

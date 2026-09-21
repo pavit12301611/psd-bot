@@ -68,9 +68,21 @@ impl Backend {
     fn kill(&self) {
         if let Some(mut child) = self.child.lock().unwrap().take() {
             // Closing stdin tells desktop_server.py to exit on its own;
-            // kill() is the fallback.
+            // signals are the fallback.
             drop(child.stdin.take());
             std::thread::sleep(Duration::from_millis(300));
+
+            // The sidecar leads its own process group (see spawn_backend), so
+            // its pid is the group id: TERM the group first to give the model
+            // server a chance to release the GPU, then SIGKILL whatever is
+            // left, then reap the direct child.
+            let pid = child.id();
+            #[cfg(unix)]
+            if pid > 0 {
+                signal_group(pid, "TERM");
+                std::thread::sleep(Duration::from_millis(400));
+                signal_group(pid, "KILL");
+            }
             let _ = child.kill();
             let _ = child.wait();
         }
@@ -107,30 +119,58 @@ fn find_app_dir() -> Option<PathBuf> {
         .find(|c| c.join("desktop_server.py").exists())
 }
 
-/// Prefer the project's venv interpreter, then PSD_AI_PYTHON, then PATH.
+/// Find the interpreter that should run the sidecar.
+///
+/// Order: `PSD_AI_PYTHON` (an explicit override always wins, which is how the
+/// RPM and a dev checkout can disagree without either breaking), then the
+/// project venv, then the packaged venv the RPM installs, then `python3`.
+/// Every filesystem candidate has to be an executable file — a venv left
+/// half-built by an interrupted `run.sh` is exactly the case that must not be
+/// picked up.
 fn find_python(app_dir: &Path) -> Vec<String> {
     if let Ok(p) = std::env::var("PSD_AI_PYTHON") {
         if !p.trim().is_empty() {
             return vec![p];
         }
     }
-    let venv_win = app_dir.join("venv").join("Scripts").join("python.exe");
-    let venv_win_w = app_dir.join("venv").join("Scripts").join("pythonw.exe");
-    let venv_nix = app_dir.join("venv").join("bin").join("python");
-    if venv_win.exists() {
-        return vec![venv_win.to_string_lossy().to_string()];
+    let candidates = [
+        app_dir.join("venv").join("bin").join("python"),
+        app_dir.join("venv").join("bin").join("python3"),
+        app_dir.join(".venv").join("bin").join("python"),
+        // packaging/psd-ai.spec installs the venv here, out of $HOME.
+        PathBuf::from("/usr/lib/psd.ai/venv/bin/python"),
+        PathBuf::from("/usr/bin/python3"),
+    ];
+    for candidate in candidates {
+        if is_executable(&candidate) {
+            return vec![candidate.to_string_lossy().to_string()];
+        }
     }
-    if venv_win_w.exists() {
-        return vec![venv_win_w.to_string_lossy().to_string()];
-    }
-    if venv_nix.exists() {
-        return vec![venv_nix.to_string_lossy().to_string()];
-    }
-    if cfg!(windows) {
-        vec!["py".into(), "-3".into()]
-    } else {
-        vec!["python3".into()]
-    }
+    vec!["python3".into()]
+}
+
+/// Signal every process in `pgid` (negative pid = process group).
+///
+/// `kill(1)` is used rather than libc so the desktop crate keeps no unsafe
+/// dependencies; failures are ignored because the group is usually already
+/// gone by the time this runs.
+#[cfg(unix)]
+fn signal_group(pgid: u32, signal: &str) {
+    let _ = Command::new("kill")
+        .arg(format!("-{signal}"))
+        .arg(format!("-{pgid}"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// True when `path` is a regular file with at least one execute bit set.
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|m| m.is_file() && (m.permissions().mode() & 0o111) != 0)
+        .unwrap_or(false)
 }
 
 fn spawn_backend(app: AppHandle) {
@@ -154,8 +194,10 @@ fn spawn_backend(app: AppHandle) {
             .current_dir(&app_dir)
             .env("PYTHONUNBUFFERED", "1")
             .env("PYTHONIOENCODING", "utf-8")
-            // See desktop_server.py: keeps numpy/OpenBLAS from deadlocking on
-            // DLL load in a console-less child on hybrid-core Windows CPUs.
+            // See desktop_server.py: one BLAS thread per process. numpy,
+            // OpenBLAS and llama.cpp each spawn their own thread pool, and
+            // left alone they oversubscribe the cores and fight the model
+            // server for the same CPUs.
             .env("OPENBLAS_NUM_THREADS", "1")
             .env("OMP_NUM_THREADS", "1")
             .env("MKL_NUM_THREADS", "1")
@@ -164,11 +206,13 @@ fn spawn_backend(app: AppHandle) {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        #[cfg(windows)]
+        #[cfg(unix)]
         {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
+            use std::os::unix::process::CommandExt;
+            // Give the sidecar its own process group. desktop_server.py starts
+            // a llama.cpp server of its own, and without this that grandchild
+            // survives the window closing and keeps the VRAM.
+            cmd.process_group(0);
         }
 
         let mut child = match cmd.spawn() {

@@ -23,7 +23,10 @@ export default defineConfig({
   },
   envPrefix: ["VITE_", "TAURI_ENV_*"],
   build: {
-    target: process.env.TAURI_ENV_PLATFORM == "windows" ? "chrome105" : "safari13",
+    // Linux-only: Tauri's WebView here is WebKitGTK, whose JS engine tracks
+    // Safari, so the Safari target is the one that matters (chrome105 was the
+    // Windows WebView2 target and is dead with the Windows build).
+    target: "safari13",
     minify: !process.env.TAURI_ENV_DEBUG,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
   },

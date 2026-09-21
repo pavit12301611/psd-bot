@@ -21,6 +21,10 @@
   <img src="assets/branding/psd_ai-browser.jpg" alt="psd.ai interface">
 </p>
 
+<p align="center">
+  <img src="assets/branding/psd_ai.jpg" alt="psd.ai interface, dark theme" width="560">
+</p>
+
 ---
 
 ## Quick Start
@@ -36,7 +40,7 @@ docker compose up -d --build
 
 Open `http://localhost:7000` when the containers are healthy. The first admin password is printed in `docker compose logs psd_ai`.
 
-Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration live in the [setup guide](website/setup.md).
+Native Fedora installs, GPU notes, HTTPS, systemd, and configuration live in the [setup guide](website/setup.md).
 
 ## Features
 

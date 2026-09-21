@@ -209,18 +209,38 @@ def extract_plan(text: str) -> Optional[Dict[str, Any]]:
 # rule-based planner (works with no model at all)
 # ---------------------------------------------------------------------------
 
+# Spoken phrase -> the app alias that `services.computer.service._open_target`
+# resolves. These are the names people say on a Fedora desktop (and their
+# Hinglish verbs are handled by _OPEN_SUFFIX_RE), so the aliases are GNOME/KDE
+# apps with Windows-ish phrases kept as synonyms: "notepad" opens the text
+# editor, "task manager" opens the system monitor, "explorer" opens Files.
 _APP_HINTS = [
-    ("notepad", "notepad"), ("calculator", "calculator"), ("calc", "calculator"),
-    ("paint", "paint"), ("file explorer", "file explorer"),
-    ("explorer", "file explorer"), ("chrome", "chrome"), ("google chrome", "chrome"),
-    ("edge", "edge"), ("firefox", "firefox"), ("spotify", "spotify"),
-    ("terminal", "terminal"), ("command prompt", "cmd"), ("cmd", "cmd"),
-    ("powershell", "powershell"), ("task manager", "task manager"),
-    ("settings", "settings"), ("vs code", "vscode"), ("vscode", "vscode"),
-    ("code", "vscode"), ("word", "winword"), ("excel", "excel"),
-    ("powerpoint", "powerpnt"), ("outlook", "outlook"), ("photos", "photos"),
-    ("store", "store"), ("discord", "discord"), ("telegram", "telegram"),
-    ("whatsapp", "whatsapp"), ("steam", "steam"), ("vlc", "vlc"),
+    ("notepad", "notepad"), ("text editor", "text editor"),
+    ("calculator", "calculator"), ("calc", "calculator"),
+    ("paint", "paint"), ("drawing", "drawing"),
+    ("file explorer", "files"), ("files", "files"), ("explorer", "files"),
+    ("nautilus", "files"), ("file manager", "files"),
+    ("chrome", "chrome"), ("google chrome", "chrome"), ("chromium", "chromium"),
+    ("edge", "edge"), ("firefox", "firefox"), ("browser", "browser"),
+    ("spotify", "spotify"), ("music", "music"), ("rhythmbox", "music"),
+    ("videos", "videos"), ("video player", "videos"), ("totem", "videos"),
+    ("vlc", "vlc"), ("mpv", "mpv"),
+    ("terminal", "terminal"), ("console", "console"), ("gnome terminal", "terminal"),
+    ("task manager", "task manager"), ("system monitor", "system monitor"),
+    ("settings", "settings"), ("control center", "settings"),
+    ("software", "software"), ("software center", "software"), ("store", "software"),
+    ("vs code", "vscode"), ("vscode", "vscode"), ("code", "vscode"),
+    ("libreoffice", "libreoffice"), ("writer", "writer"), ("word", "writer"),
+    ("excel", "spreadsheet"), ("spreadsheet", "spreadsheet"),
+    ("powerpoint", "impress"), ("presentation", "impress"),
+    ("email", "email"), ("mail", "email"), ("outlook", "email"),
+    ("thunderbird", "thunderbird"),
+    ("photos", "photos"), ("image viewer", "photos"),
+    ("pdf", "pdf"), ("document viewer", "pdf"), ("evince", "pdf"),
+    ("calendar", "calendar"), ("clock", "clock"), ("weather", "weather"),
+    ("maps", "maps"), ("disks", "disks"), ("logs", "logs"), ("help", "help"),
+    ("camera", "camera"), ("discord", "discord"), ("telegram", "telegram"),
+    ("steam", "steam"),
 ]
 
 _OPEN_RE = re.compile(

@@ -247,15 +247,13 @@ def test_redirect_base_override_is_documented():
 # The derived default is only as good as APP_PORT, and every launcher hands the
 # port to uvicorn as a command-line flag, which the app cannot read back. Each
 # one has to put the same value in the environment or the callback falls back to
-# 7000 — which is the macOS-launcher-on-7860 case this whole change is about.
-# internal_api_base() and companion pairing read APP_PORT too, so they go wrong
-# in the same way.
+# 7000. internal_api_base() and companion pairing read APP_PORT too, so they go
+# wrong in the same way.
 
 _LAUNCHERS = (
     # file, the export, the uvicorn flag it has to agree with
-    ("start-macos.sh", 'export APP_PORT="$PORT"', '--port "$PORT"'),
-    ("build-macos-app.sh", 'export APP_PORT="$PORT"', '--port "$PORT"'),
-    ("launch-windows.ps1", "$env:APP_PORT = $Port", "--port $Port"),
+    ("psd_ai-ui.service", "Environment=APP_PORT=", "--port $APP_PORT"),
+    ("Dockerfile", "ENV APP_PORT=", '--port "${APP_PORT:-7000}"'),
 )
 
 
@@ -264,3 +262,15 @@ def test_launchers_export_the_port_they_serve_on():
         text = (_repo_root() / name).read_text(encoding="utf-8")
         assert uvicorn_flag in text, f"{name}: launcher no longer passes {uvicorn_flag}"
         assert export in text, f"{name}: serves on a port the app cannot read back"
+
+
+def test_the_service_unit_is_substituted_by_the_installer():
+    """install-service.sh fills the placeholders in the unit template."""
+    unit = (_repo_root() / "psd_ai-ui.service").read_text(encoding="utf-8")
+    installer = (_repo_root() / "install-service.sh").read_text(encoding="utf-8")
+
+    for placeholder in ("__APP_DIR__", "__PORT__", "__HOST__"):
+        assert placeholder in unit, f"template lost {placeholder}"
+        assert placeholder in installer, f"installer no longer substitutes {placeholder}"
+    assert "systemctl --user" in installer
+    assert "loginctl enable-linger" in installer

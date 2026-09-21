@@ -66,8 +66,8 @@ question or conversation):
 an app, open a file, or open a website.
 - {{"name": "type", "params": {{"text": "<text to type>"}}}} — type into the \
 focused window.
-- {{"name": "key", "params": {{"combo": "<ctrl+s|alt+tab|enter|win>"}}}} — \
-press a key or a shortcut.
+- {{"name": "key", "params": {{"combo": "<ctrl+s|alt+tab|super|enter>"}}}} — \
+press a key or a shortcut (super is the Windows-logo key on a PC keyboard).
 - {{"name": "click", "params": {{"x": <int>, "y": <int>, "button": "left", \
 "clicks": 1}}}} — click a screen point.
 - {{"name": "move", "params": {{"x": <int>, "y": <int>}}}}
@@ -82,8 +82,8 @@ negative down.
 - {{"name": "clipboard_set", "params": {{"text": "<text>"}}}}
 - {{"name": "info", "params": {{}}}} — CPU, RAM, disk, battery.
 - {{"name": "processes", "params": {{"limit": 20}}}}
-- {{"name": "kill", "params": {{"name": "<process.exe>"}}}} — only when the \
-user explicitly asks to quit or kill something.
+- {{"name": "kill", "params": {{"name": "<process name>"}}}} — only when the \
+user explicitly asks to quit or kill something (Linux names carry no .exe: firefox, llama-server).
 - {{"name": "volume", "params": {{"level": <0-100>}}}} or \
 {{"direction": "up"|"down", "steps": <int>}} or {{"mute": true}}
 - {{"name": "notify", "params": {{"title": "<t>", "message": "<m>"}}}}
@@ -94,7 +94,12 @@ Rules:
 you have not seen; say you need to look at the screen first.
 - Do not use `kill`, `close_window` or `type` unless the user clearly asked.
 - Always fill "say" with what should be spoken BEFORE the action runs \
-(e.g. "Opening Notepad, sir."), in English, one sentence.
+(e.g. "Opening the text editor, sir."), in English, one sentence.
+- App names are resolved on a Fedora desktop: "notepad" opens the text editor,
+"explorer" opens Files, "task manager" opens System Monitor.
+- If an action answers that the compositor will not allow it (window lists,
+focus and close are unavailable on GNOME and KDE Wayland), say so plainly
+instead of retrying.
 """
 
 

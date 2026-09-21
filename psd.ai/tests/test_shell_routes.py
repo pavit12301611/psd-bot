@@ -171,36 +171,29 @@ class TestRunningInContainer:
         )
 
 
-class TestAppleSiliconDetection:
-    """APFEL should only surface as available on native Apple Silicon Macs."""
+class TestAppleSiliconRows:
+    """APFEL/MLX are remote-Mac-only now: the host is Linux.
 
-    def test_reports_true_on_macos_arm64(self, monkeypatch):
-        import core.platform_compat as platform_compat
+    The Cookbook still serves on a macOS rig over SSH, so those dependency rows
+    must stay in the list — but they have to report "not applicable here"
+    instead of claiming a Linux host can run Apple Foundational Models.
+    """
 
-        monkeypatch.setattr(platform_compat.platform, "system", lambda: "Darwin")
-        monkeypatch.setattr(platform_compat.platform, "machine", lambda: "arm64")
-        importlib.reload(platform_compat)
+    SOURCE = (Path(__file__).resolve().parents[1] / "routes" / "shell_routes.py").read_text(
+        encoding="utf-8"
+    )
 
-        assert platform_compat.IS_APPLE_SILICON is True
+    def test_no_apple_silicon_host_flag(self):
+        assert "IS_APPLE_SILICON" not in self.SOURCE
 
-    @pytest.mark.parametrize("machine", ["x86_64", "amd64"])
-    def test_reports_false_off_apple_silicon(self, monkeypatch, machine):
-        import core.platform_compat as platform_compat
+    def test_mlx_packages_apply_only_to_a_remote_mac(self):
+        assert 'is_apple_target = target_os_id == "macos"' in self.SOURCE
+        assert "Only relevant for a remote Apple Silicon host" in self.SOURCE
 
-        monkeypatch.setattr(platform_compat.platform, "system", lambda: "Darwin")
-        monkeypatch.setattr(platform_compat.platform, "machine", lambda: machine)
-        importlib.reload(platform_compat)
-
-        assert platform_compat.IS_APPLE_SILICON is False
-
-    def test_reports_false_on_non_macos(self, monkeypatch):
-        import core.platform_compat as platform_compat
-
-        monkeypatch.setattr(platform_compat.platform, "system", lambda: "Linux")
-        monkeypatch.setattr(platform_compat.platform, "machine", lambda: "arm64")
-        importlib.reload(platform_compat)
-
-        assert platform_compat.IS_APPLE_SILICON is False
+    def test_apfel_row_is_not_applicable_on_this_host(self):
+        assert 'if pkg["name"] == "APFEL":' in self.SOURCE
+        assert 'pkg["applicable"] = False' in self.SOURCE
+        assert "not applicable to this Linux host" in self.SOURCE
 
 
 class TestDockerRowStatus:
