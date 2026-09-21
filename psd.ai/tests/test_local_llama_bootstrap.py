@@ -1115,3 +1115,108 @@ def test_wait_message_quotes_the_model_log(monkeypatch, tmp_path):
     # Quiet after the first few beats: 40 s of waiting is at most two lines,
     # not the forty-identical-line wall a first run used to print.
     assert len(beats) <= 2, beats
+
+
+# ── download resilience: one dead CDN socket must not kill the whole group ──
+class _FakeResponse:
+    """Minimal urlopen() result: sliced body, dict headers, context manager."""
+
+    def __init__(self, body: bytes, start: int, stop_after=None):
+        self.status = 206 if start else 200
+        self.headers = {"Content-Length": str(len(body) - start)}
+        self._data = body[start:] if stop_after is None else body[start:start + stop_after]
+        self._pos = 0
+
+    def read(self, n):
+        buf = self._data[self._pos:self._pos + n]
+        self._pos += len(buf)
+        return buf
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _range_start(req):
+    rng = req.get_header("Range")
+    return int(rng.split("=", 1)[1].rstrip("-")) if rng else 0
+
+
+def test_download_file_resumes_after_a_dropped_connection(tmp_path, monkeypatch):
+    """A truncated transfer retries with a Range header instead of raising."""
+    payload = b"A" * 400 + b"B" * 600
+    dest = tmp_path / "model.gguf"
+    starts = []
+
+    def fake_urlopen(req, timeout=None):
+        start = _range_start(req)
+        starts.append(start)
+        # First connection dies after 400 bytes; the retry serves the rest.
+        return _FakeResponse(payload, start, stop_after=400 if start == 0 else None)
+
+    monkeypatch.setattr(ll.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(ll.time, "sleep", lambda _s: None)
+    out = ll.download_file("http://fake/model.gguf", dest, expected_size=len(payload))
+    assert out == dest
+    assert dest.read_bytes() == payload
+    assert starts == [0, 400]  # second attempt resumed exactly where it stopped
+    assert not dest.with_suffix(".gguf.part").exists()
+
+
+def test_download_file_reconnects_when_the_transfer_stalls(tmp_path, monkeypatch):
+    """A connection that trickles below the floor is abandoned and resumed."""
+    payload = b"x" * 100
+    dest = tmp_path / "stall.gguf"
+    starts = []
+    seen_logs = []
+    monkeypatch.setattr(ll, "log", lambda msg="": seen_logs.append(msg))
+    monkeypatch.setattr(ll, "_STALL_WINDOW", 0.0)   # check on every iteration
+    monkeypatch.setattr(ll, "_STALL_MIN_RATE", 8 * 1024)
+
+    class StallingResponse(_FakeResponse):
+        def __init__(self, body, start):
+            super().__init__(body, start)
+            self._first = start == 0
+
+        def read(self, n):
+            if not self._first:
+                ll._STALL_MIN_RATE = 0.0  # the fresh connection never stalls
+                return super().read(n)
+            if self._pos == 0:
+                # First connection: hand over 40 bytes, then make sure no
+                # rate can ever pass the floor again -> stall detector fires.
+                ll._STALL_MIN_RATE = float("inf")
+                self._pos = 40
+                return payload[:40]
+            return b"x"  # trickle forever, never EOF: a zombie CDN socket
+
+    def fake_urlopen(req, timeout=None):
+        start = _range_start(req)
+        starts.append(start)
+        return StallingResponse(payload, start)
+
+    monkeypatch.setattr(ll.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(ll.time, "sleep", lambda _s: None)
+    out = ll.download_file("http://fake/stall.gguf", dest, expected_size=len(payload))
+    assert out.read_bytes() == payload
+    assert starts == [0, 40]
+    assert any("stalled" in m for m in seen_logs), seen_logs
+    assert any("resuming from 0.00 GB" in m for m in seen_logs), seen_logs
+
+
+def test_download_file_gives_up_after_all_attempts(tmp_path, monkeypatch):
+    """Retries are bounded: a permanently broken URL still fails the plan."""
+    dest = tmp_path / "broken.gguf"
+    calls = []
+
+    def fake_urlopen(req, timeout=None):
+        calls.append(1)
+        raise ll.urllib.error.URLError("network unreachable")
+
+    monkeypatch.setattr(ll.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(ll.time, "sleep", lambda _s: None)
+    with pytest.raises(OSError):
+        ll.download_file("http://fake/broken.gguf", dest, expected_size=10, attempts=3)
+    assert len(calls) == 3

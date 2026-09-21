@@ -2047,10 +2047,23 @@ def list_repo_files(repo: str, revision: str = "main") -> List[Dict[str, Any]]:
     return [e for e in data if isinstance(e, dict) and e.get("type") == "file"]
 
 
-def download_file(url: str, dest: Path, expected_size: int = 0, label: str = "") -> Path:
-    """Resumable download with a coarse progress line."""
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(dest.suffix + ".part")
+# A transfer that trickles slower than this for _STALL_WINDOW seconds is
+# effectively dead. HF's CDN/xet connections sometimes degrade to a few KB/s
+# instead of dropping, so the socket timeout never fires and a first-run
+# download crawls for minutes on end - which used to end with the whole model
+# group giving up. Reconnecting fixes it almost every time: the .part file
+# stays on disk and the next attempt resumes it with a Range header.
+_STALL_WINDOW = 30.0        # seconds of measurement
+_STALL_MIN_RATE = 8 * 1024  # bytes/second
+
+
+class _DownloadStalled(IOError):
+    """Internal signal: this connection is trickling, open a fresh one."""
+
+
+def _download_once(url: str, dest: Path, tmp: Path, expected_size: int,
+                   label: str) -> Path:
+    """One connection attempt; resumes from whatever .part bytes exist."""
     have = tmp.stat().st_size if tmp.exists() else 0
     if dest.exists() and (not expected_size or dest.stat().st_size == expected_size):
         return dest
@@ -2077,6 +2090,8 @@ def download_file(url: str, dest: Path, expected_size: int = 0, label: str = "")
             except ValueError:
                 total = 0
         chunk = 1024 * 1024
+        last_check = time.time()
+        last_have = have
         with open(tmp, mode) as fh:
             while True:
                 buf = resp.read(chunk)
@@ -2089,11 +2104,48 @@ def download_file(url: str, dest: Path, expected_size: int = 0, label: str = "")
                     pct = have * 100.0 / total
                     log(f"      {label or dest.name}: {pct:5.1f}%  {have / GB:.2f}/{total / GB:.2f} GB")
                     last = now
+                elapsed = now - last_check
+                if elapsed >= _STALL_WINDOW and elapsed > 0:
+                    rate = (have - last_have) / elapsed
+                    if rate < _STALL_MIN_RATE:
+                        raise _DownloadStalled(
+                            f"transfer stalled at {rate / 1024:.1f} KB/s "
+                            f"({have / GB:.2f}/{(total or have) / GB:.2f} GB)")
+                    last_check, last_have = now, have
     if total and have < total:
         raise IOError(f"download of {dest.name} stopped at {have} of {total} bytes")
     tmp.replace(dest)
     log(f"      {label or dest.name}: done ({have / GB:.2f} GB)")
     return dest
+
+
+def download_file(url: str, dest: Path, expected_size: int = 0, label: str = "",
+                  attempts: int = 5) -> Path:
+    """Resumable download with a coarse progress line and automatic retries.
+
+    A dropped, truncated or trickling connection is not fatal: the .part file
+    survives, so every retry resumes where the previous attempt stopped on a
+    fresh connection. Only when `attempts` connections all fail does this
+    raise - one dead CDN socket no longer kills the whole first-run group.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    name = label or dest.name
+    attempts = max(1, attempts)
+    for attempt in range(1, attempts + 1):
+        try:
+            return _download_once(url, dest, tmp, expected_size, label)
+        except OSError as exc:
+            # OSError covers URLError/HTTPError, socket timeouts, the
+            # truncated-transfer IOError and _DownloadStalled alike.
+            if attempt >= attempts:
+                raise
+            have = tmp.stat().st_size if tmp.exists() else 0
+            log(f"      [warn] {name}: {exc}")
+            log(f"      [warn] {name}: reconnecting ({attempt + 1}/{attempts}), "
+                f"resuming from {have / GB:.2f} GB already on disk...")
+            time.sleep(min(30.0, 2.0 * attempt))
+    raise IOError(f"download of {dest.name} failed after {attempts} attempts")
 
 
 # ── llama.cpp install ────────────────────────────────────────────────────────

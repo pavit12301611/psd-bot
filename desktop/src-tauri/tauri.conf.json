@@ -39,7 +39,7 @@
     "category": "Utility",
     "shortDescription": "Local-first AI assistant with offline models, voice and PC control",
     "longDescription": "psd.ai runs a group of local GGUF models through llama.cpp and gives an agent shell, a cookbook for serving models, memory, RAG, calendar and email tools, plus allow-listed desktop control on Wayland and X11. Nothing leaves the machine unless you configure a remote provider.",
-    "homepageUrl": "https://github.com/pavit12301611/psd-bot",
+    "homepage": "https://github.com/pavit12301611/psd-bot",
     "license": "MIT",
     "publisher": "psd.ai",
     "icon": [
@@ -72,6 +72,5 @@
         "files": {}
       }
     }
-  },
-  "mainBinaryName": "psd-ai"
+  }
 }
