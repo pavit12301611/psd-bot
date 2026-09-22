@@ -7,6 +7,7 @@ const VIEW_LABEL: Record<AppView, string> = {
   chat: "Chat",
   browser: "Live Browser",
   talk: "Talk to psd.ai",
+  swarm: "Swarm",
   models: "Models",
   notes: "Notes",
   tasks: "Tasks",

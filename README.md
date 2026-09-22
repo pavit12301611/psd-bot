@@ -94,7 +94,7 @@ That's it. It will:
 4. inside that window: create the virtual environment, install dependencies
    and the **Jarvis extras** (offline speech-to-text + PC control), run
    first-time setup, and build the psd.ai desktop app (first run only)
-5. **download and run a hardware-fit group of 3 to 5 local models** with its
+5. **download and run a hardware-fit group of 3 to 6 local models** with its
    own progress bar in the same window
 6. hit **Launch** and the **psd.ai desktop app** opens — on the very first
    launch it asks you to create your admin account right in the window
@@ -151,10 +151,38 @@ Want it at login instead? `./psd.ai/install-service.sh` installs a **systemd
 user unit** (`psd-ai-ui.service`) so the engine starts with your session, with
 no root involved.
 
+## The Swarm — saare models, ek team
+
+**Swarm** (Ctrl+K → "Swarm", ya left rail ka network icon) is the whole local
+model group working **together** on one request, in one view:
+
+* **The strongest resident model becomes the manager.** It splits your request
+  into short specialist steps and writes the final answer from the reports.
+* **Every other model is a worker — and works only on what it is good at.**
+  The coding-tuned model writes code, the "thinking" model does analysis, the
+  smallest quick model does fast lookups, a vision model handles images. Work
+  is routed by specialty match first, then by power (total params) × speed
+  (measured tok/s on your machine), so each step is both quick and strong.
+* **Independent steps run in parallel** — up to six models crunching at once —
+  and the manager streams one clean, combined answer.
+* **Full internet access for research steps.** The scout searches the live
+  web through psd.ai's own search service, and the manager cites the real
+  sources it used. (Toggle: Internet on/off in the Swarm header.)
+* **The swarm remembers.** Durable facts from every swarm turn — or from any
+  URL you hand it ("Learn from a page") — are stored locally and injected
+  into future swarm prompts. One click to forget.
+* **You control the team.** Switch any worker off/on from the roster cards,
+  flip parallel / auto-learn / plan-steps in Swarm settings. Everything is
+  admin-gated like the rest of the app.
+
+The engine lives in `psd.ai/src/swarm.py` (no extra service — it talks to the
+same llama-server endpoints the app already runs) with routes under
+`/api/swarm/*`.
+
 ## The local AI model group
 
 Step 6 opens a **second window** titled *psd.ai - local model group*. On the
-first run it downloads three to five hardware-fit GGUF models concurrently and
+first run it downloads three to six hardware-fit GGUF models concurrently and
 runs one `llama-server` per model on ports starting at `8080`. Everything is
 cached **on the device, outside the project folder** —
 `~/.local/share/psd.ai/runtime` (the XDG data dir; override with
@@ -164,7 +192,7 @@ you like and later launches still start in a few seconds. An old
 
 It measures your RAM, GPU and CPU, then selects the strongest group that can
 stay resident together. The group never has fewer than three models and never
-exceeds five. On a typical machine it looks like this:
+exceeds six. On a typical machine it looks like this:
 
 | Your machine | Example resident group (primary first) |
 | --- | --- |

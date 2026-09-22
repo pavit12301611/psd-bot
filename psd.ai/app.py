@@ -838,6 +838,11 @@ app.include_router(setup_cookbook_routes())
 from routes.workspace_routes import setup_workspace_routes
 app.include_router(setup_workspace_routes())
 
+# Swarm — the whole local model group working as one team (manager + workers)
+from routes.swarm_routes import setup_swarm_routes
+app.include_router(setup_swarm_routes())
+
+
 # Hardware model fitting (cookbook "What Fits?" tab)
 from routes.hwfit_routes import setup_hwfit_routes
 app.include_router(setup_hwfit_routes())

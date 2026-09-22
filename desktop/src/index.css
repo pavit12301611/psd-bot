@@ -657,3 +657,95 @@ code,
   transform: translateX(16px);
   background: var(--accent);
 }
+
+/* ── Swarm (all models, one team) ─────────────────────────────────────────── */
+/* The manager card gets a slowly orbiting accent border — the "captain" cue. */
+.swarm-manager {
+  position: relative;
+}
+.swarm-manager::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--swarm-angle, 0deg),
+    color-mix(in oklab, var(--accent) 65%, transparent),
+    transparent 32%,
+    color-mix(in oklab, var(--accent) 45%, transparent) 55%,
+    transparent 82%,
+    color-mix(in oklab, var(--accent) 65%, transparent)
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: swarm-orbit 6s linear infinite;
+  pointer-events: none;
+}
+@property --swarm-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes swarm-orbit {
+  to {
+    --swarm-angle: 360deg;
+  }
+}
+
+/* A worker lane while its step is still running. */
+.swarm-step-running {
+  animation: swarm-pulse 1.6s ease-in-out infinite;
+}
+@keyframes swarm-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 22%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in oklab, var(--accent) 0%, transparent);
+  }
+}
+
+/* ── General interface polish ─────────────────────────────────────────────── */
+/* Focus rings that actually show up on both themes. */
+:where(button, input, textarea, [role="switch"], [tabindex]):focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent);
+  outline-offset: 1.5px;
+}
+
+/* Textareas grow their placeholder into a hint, not a wall of grey. */
+textarea.input::placeholder {
+  opacity: 0.75;
+}
+
+/* Scrollbars: slightly wider hit area, calmer thumb. */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  border-radius: 99px;
+  border: 2.5px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, var(--muted) 55%, transparent);
+}
+
+/* Cards: a hair more lift on hover, but never on touch devices. */
+@media (hover: hover) {
+  .card:hover {
+    transform: translateY(-1px);
+  }
+}
+
+/* Reduced motion: the swarm goes still, content is untouched. */
+@media (prefers-reduced-motion: reduce) {
+  .swarm-manager::before,
+  .swarm-step-running {
+    animation: none;
+  }
+}

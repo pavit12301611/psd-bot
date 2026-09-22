@@ -21,6 +21,7 @@ export type AppView =
   | "chat"
   | "browser"
   | "talk"
+  | "swarm"
   | "models"
   | "notes"
   | "tasks"
@@ -34,7 +35,7 @@ export type AppView =
 export type Density = "comfortable" | "compact";
 
 const VIEWS: AppView[] = [
-  "chat", "browser", "talk", "models", "notes", "tasks", "calendar", "memory",
+  "chat", "browser", "talk", "swarm", "models", "notes", "tasks", "calendar", "memory",
   "gallery", "library", "research", "compare", "email",
 ];
 

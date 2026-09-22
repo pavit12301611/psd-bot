@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Search,
   MessageSquare,
+  Network,
   HardDrive,
   StickyNote,
   ListTodo,
@@ -24,6 +25,7 @@ import { openExternal } from "../lib/ui";
 const JUMP: { id: AppView; label: string; icon: typeof MessageSquare; keys: string }[] = [
   { id: "chat", label: "Chat", icon: MessageSquare, keys: "chat conversations" },
   { id: "talk", label: "Talk to psd.ai", icon: Mic, keys: "talk voice speak jarvis microphone english" },
+  { id: "swarm", label: "Swarm — all models together", icon: Network, keys: "swarm team manager workers all models together" },
   { id: "models", label: "Models", icon: HardDrive, keys: "models download huggingface ollama gguf" },
   { id: "notes", label: "Notes", icon: StickyNote, keys: "notes memo" },
   { id: "tasks", label: "Tasks", icon: ListTodo, keys: "tasks schedule cron" },

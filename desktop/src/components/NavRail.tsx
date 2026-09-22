@@ -1,5 +1,6 @@
 import {
   MessageSquare,
+  Network,
   HardDrive,
   StickyNote,
   ListTodo,
@@ -23,6 +24,7 @@ const ITEMS: { id: AppView; icon: typeof MessageSquare; label: string; hint?: st
   { id: "chat", icon: MessageSquare, label: "Chat" },
   { id: "browser", icon: Globe, label: "Live Browser" },
   { id: "talk", icon: Mic, label: "Talk to psd.ai" },
+  { id: "swarm", icon: Network, label: "Swarm — all models together" },
   { id: "models", icon: HardDrive, label: "Models" },
   { id: "notes", icon: StickyNote, label: "Notes" },
   { id: "tasks", icon: ListTodo, label: "Tasks" },

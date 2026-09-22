@@ -4,7 +4,7 @@
 One command that makes the app work offline out of the box:
 
   1. detect this machine's hardware (RAM / CPU / GPU / session)
-  2. choose the strongest group of 3–5 models that fits together
+  2. choose the strongest group of 3–6 models that fits together
   3. download llama.cpp (prebuilt llama-server for Linux) — first run only
   4. download the GGUF weights concurrently (resumable) — first run only
   5. start one llama-server per model on consecutive local ports
@@ -529,10 +529,10 @@ def spec_quality(spec: ModelSpec) -> float:
     return spec.params_b
 
 # A fresh install intentionally starts a small local model group instead of a
-# single endpoint. The planner may choose fewer than five when the hardware
+# single endpoint. The planner may choose fewer than six when the hardware
 # cannot hold them, but it never deliberately provisions fewer than three.
 MIN_GROUP_MODELS = 3
-MAX_GROUP_MODELS = 5
+MAX_GROUP_MODELS = 6
 GROUP_SERVER_HEADROOM_GB = 0.15
 GROUP_STATE_FILE = RUNTIME_DIR / "local_model_group.json"
 
@@ -544,7 +544,7 @@ GROUP_STATE_FILE = RUNTIME_DIR / "local_model_group.json"
 MAX_GROUP_CANDIDATES = 9
 # Per-spec cap for the knapsack search — see _group_variants.
 MAX_VARIANTS_PER_SPEC = 8
-# Beam width for the group search. 192 states over 3–5 specs is enough to keep
+# Beam width for the group search. 192 states over 3–6 specs is enough to keep
 # the cheap-but-strong combinations alive while staying well under a second.
 GROUP_BEAM_WIDTH = 192
 
@@ -552,8 +552,8 @@ GROUP_BEAM_WIDTH = 192
 # "How much of this machine may the models have?" The default keeps a
 # comfortable margin so the desktop stays responsive; `power` and `max` trade
 # that margin for a bigger model and a longer context window.
-#   balanced : 3–5 resident models, ≤62 % of RAM (default, responsive desktop)
-#   power    : 3–5 resident models, ≤78 % of RAM, ≥8k context, stronger picks
+#   balanced : 3–6 resident models, ≤62 % of RAM (default, responsive desktop)
+#   power    : 3–6 resident models, ≤78 % of RAM, ≥8k context, stronger picks
 #   max      : ONE model, ≤90 % of RAM/VRAM, the longest context that fits
 @dataclass(frozen=True)
 class PowerProfile:
@@ -1400,7 +1400,7 @@ def _group_shortlist(
     twenty-model catalogue it has to be bounded. Keeping the strongest
     ``limit`` candidates cannot hide a better answer — everything dropped is
     weaker than everything kept — but a group also needs *cheap* members to
-    reach three to five models inside a tight budget, so the smallest
+    reach three to six models inside a tight budget, so the smallest
     affordable specs are kept alongside the strongest ones.
     """
     affordable = [spec for spec in specs if variants_by_spec.get(spec.id)]
@@ -1435,7 +1435,7 @@ def plan_model_group(
     profile: Optional[PowerProfile] = None,
     prefer_tier: str = "",
 ) -> Optional[GroupPlan]:
-    """Choose three to five models that fit in memory together.
+    """Choose three to six models that fit in memory together.
 
     Every feasible group size is scored and the best one wins, rather than
     taking the largest group that happens to fit: five small models make a
@@ -2753,7 +2753,7 @@ def prepare_local_llama_group(
     profile: str = "",
     prefer_tier: str = "",
 ) -> Dict[str, Any]:
-    """Download and run a hardware-fit group of three to five models.
+    """Download and run a hardware-fit group of three to six models.
 
     llama-server is intentionally launched once per model on consecutive ports
     (the base port is the first model). Weight downloads run concurrently, so a

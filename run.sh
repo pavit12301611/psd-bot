@@ -20,7 +20,7 @@
 #    7. run setup - creates data folders        (the app asks you to
 #       create your admin account in its own window on first launch)
 #    8. build the psd.ai desktop app            (first run only)
-#    9. download + run a hardware-fit group of 3-5 local models
+#    9. download + run a hardware-fit group of 3-6 local models
 #       (a few GB per model, in the background, logging to
 #       logs/local-model.log) - with a Launch button at the end
 #
@@ -1126,9 +1126,9 @@ if [ "$NO_APP" = "1" ]; then
 fi
 
 # ------------------------------------------------------------------
-# 7. Local AI model group (first run downloads 3-5 fit models)
+# 7. Local AI model group (first run downloads 3-6 fit models)
 #
-#     Picks a 3-5 model group for THIS machine (RAM / GPU / VRAM),
+#     Picks a 3-6 model group for THIS machine (RAM / GPU / VRAM),
 #     downloads the llama.cpp server + model weights, serves one model
 #     per port starting at $LLAMA_PORT, and registers the group in the app.
 #
@@ -1143,7 +1143,7 @@ if [ -z "${PSD_NO_LOCAL_MODEL:-}" ]; then
     gui_step models running "downloading & serving the model group (first run: several GB)"
     echo
     echo "  ==> Starting the local model group in the background..."
-    echo "      First run downloads llama.cpp + 3-5 fit model weights (a few GB each)."
+    echo "      First run downloads llama.cpp + 3-6 fit model weights (a few GB each)."
     echo "      Models are stored at: $PSD_AI_RUNTIME_DIR"
     echo "      (outside the project folder, so re-downloading the code never"
     echo "       re-downloads models). Progress:  tail -f logs/local-model.log"

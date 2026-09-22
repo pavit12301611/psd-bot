@@ -519,6 +519,114 @@ export const compare = {
   remove: (id: string) => del(`/api/compare/${id}`),
 };
 
+// ---------- swarm (whole model group as one team) ----------
+export interface SwarmWorkerInfo {
+  spec_id: string;
+  label: string;
+  model_id: string;
+  base_url: string;
+  endpoint_id: string;
+  tier: string;
+  thinking: boolean;
+  vision: boolean;
+  params_b: number;
+  active_params_b: number;
+  moe: boolean;
+  context: number;
+  quant: string;
+  port: number;
+  role: string;
+  measured_tps: number;
+  est_tps: number;
+  speed_tps: number;
+  power: number;
+  enabled: boolean;
+  is_manager: boolean;
+}
+export interface SwarmStatus {
+  available: boolean;
+  workers: SwarmWorkerInfo[];
+  manager: SwarmWorkerInfo | null;
+  settings: {
+    internet: boolean;
+    parallel: boolean;
+    auto_learn: boolean;
+    max_steps: number;
+    disabled_workers: string[];
+  };
+  knowledge_count: number;
+  group?: { count?: number; resident_gb?: number; budget_gb?: number; profile?: string; fits?: boolean } | null;
+}
+export interface SwarmStepDone {
+  index: number;
+  kind: string;
+  task: string;
+  worker: string;
+  worker_spec: string;
+  ok: boolean;
+  text: string;
+  elapsed_s: number;
+  tps: number;
+  error: string;
+}
+export interface SwarmHandlers {
+  onPhase?: (phase: string, manager: SwarmWorkerInfo | null) => void;
+  onPlan?: (steps: { kind: string; task: string; worker: string; kind_label: string }[]) => void;
+  onStepDone?: (step: SwarmStepDone) => void;
+  onSynthDelta?: (delta: string) => void;
+  onFinal?: (payload: { text: string; sources: { url: string; title?: string }[]; steps: SwarmStepDone[] }) => void;
+  onError?: (message: string) => void;
+  onDone?: () => void;
+}
+export const swarm = {
+  status: () => get<SwarmStatus>("/api/swarm/status"),
+  settings: (update: Partial<Record<"internet" | "parallel" | "auto_learn", boolean> & { max_steps: number; disabled_workers: string[] }>) =>
+    postJson<SwarmStatus["settings"]>("/api/swarm/settings", update),
+  knowledge: () => get<{ entries: { id: string; text: string; source: string; url?: string; ts: number }[] }>("/api/swarm/knowledge"),
+  addKnowledge: (text: string) => postJson("/api/swarm/knowledge", { text }),
+  removeKnowledge: (id: string) => del(`/api/swarm/knowledge/${id}`),
+  clearKnowledge: () => postJson<{ removed: number }>("/api/swarm/knowledge/clear", {}),
+  learnUrl: (url: string) => postJson<{ ok: boolean; learned: number; facts: { id: string; text: string }[] }>("/api/swarm/learn/url", { url }),
+
+  /** One swarm turn, streamed. */
+  chat: (message: string, history: { role: string; content: string }[], h: SwarmHandlers): StreamHandle =>
+    stream(
+      { method: "POST", path: "/api/swarm/chat", json: { message, history } },
+      {
+        onData: (raw) => {
+          if (raw === "[DONE]") {
+            h.onDone?.();
+            return;
+          }
+          let ev: any;
+          try {
+            ev = JSON.parse(raw);
+          } catch {
+            return;
+          }
+          switch (ev.type) {
+            case "phase": h.onPhase?.(ev.phase, ev.manager || null); break;
+            case "plan": h.onPlan?.(ev.steps || []); break;
+            case "step_start": break;
+            case "step_done": h.onStepDone?.(ev as SwarmStepDone); break;
+            case "synth_delta": h.onSynthDelta?.(ev.delta || ""); break;
+            case "final": h.onFinal?.({ text: ev.text || "", sources: ev.sources || [], steps: ev.steps || [] }); break;
+            case "error": h.onError?.(ev.error || "Swarm failed"); break;
+          }
+        },
+        onError: (m) => {
+          let msg = m;
+          try {
+            const j = JSON.parse(m);
+            msg = j.error || j.detail || m;
+          } catch { /* raw */ }
+          h.onError?.(msg);
+        },
+        onDone: () => h.onDone?.(),
+      },
+    ),
+};
+
 // ---------- email ----------
 export interface EmailAccount {
   id: string;

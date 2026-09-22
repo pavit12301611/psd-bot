@@ -22,6 +22,7 @@ import Research from "./components/Research";
 import Compare from "./components/Compare";
 import Email from "./components/Email";
 import ModelsHub from "./components/ModelsHub";
+import Swarm from "./components/Swarm";
 import EmbeddedBrowser from "./components/EmbeddedBrowser";
 import { inTauri, onBackendStatus } from "./lib/ipc";
 
@@ -251,6 +252,8 @@ function Feature({ view }: { view: AppView }) {
       return <EmbeddedBrowser isSplit={false} />;
     case "talk":
       return <Talk />;
+    case "swarm":
+      return <Swarm />;
     case "models":
       return <ModelsHub />;
     case "notes":
