@@ -31,6 +31,8 @@ class SwarmSettingsBody(BaseModel):
     internet: Optional[bool] = None
     parallel: Optional[bool] = None
     auto_learn: Optional[bool] = None
+    verify: Optional[bool] = None
+    cloud_workers: Optional[bool] = None
     max_steps: Optional[int] = None
     disabled_workers: Optional[List[str]] = None
 
@@ -65,6 +67,10 @@ def setup_swarm_routes() -> APIRouter:
             update["parallel"] = bool(body.parallel)
         if body.auto_learn is not None:
             update["auto_learn"] = bool(body.auto_learn)
+        if body.verify is not None:
+            update["verify"] = bool(body.verify)
+        if body.cloud_workers is not None:
+            update["cloud_workers"] = bool(body.cloud_workers)
         if body.max_steps is not None:
             update["max_steps"] = int(body.max_steps)
         if body.disabled_workers is not None:

@@ -70,6 +70,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "internet": True,       # full web access for research steps
     "parallel": True,       # run independent worker steps concurrently
     "auto_learn": True,     # distil durable facts after each swarm turn
+    "verify": True,         # a critic pass checks the draft before it ships
+    "cloud_workers": False,  # let configured REMOTE endpoints join the team
     "max_steps": 4,         # manager plan budget
     "disabled_workers": [],  # spec_ids the user switched off
 }
@@ -224,7 +226,8 @@ def search_knowledge(query: str, owner: str = "", limit: int = KNOWLEDGE_INJECT_
 # ── Worker roster ────────────────────────────────────────────────────────────
 @dataclass
 class SwarmWorker:
-    """One local llama-server endpoint with its specialty attached."""
+    """One model endpoint (local llama-server or an allowed remote) with its
+    specialty attached."""
     spec_id: str
     label: str
     model_id: str
@@ -243,6 +246,8 @@ class SwarmWorker:
     measured_tps: float = 0.0    # live tok/s EWMA, 0 = not measured yet
     enabled: bool = True
     is_manager: bool = False
+    remote: bool = False         # True → a cloud/remote endpoint (cloud assist)
+    api_key: str = ""            # NEVER serialized (see to_dict)
 
     @property
     def est_tps(self) -> float:
@@ -263,6 +268,7 @@ class SwarmWorker:
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
+        d.pop("api_key", None)  # credentials never leave the engine
         d["speed_tps"] = round(self.speed_tps, 1)
         d["est_tps"] = round(self.est_tps, 1)
         d["power"] = round(self.power, 1)
@@ -289,18 +295,103 @@ def _spec_by_id(spec_id: str):
         return None
 
 
-def build_roster(owner: str = "") -> List[SwarmWorker]:
-    """Everyone resident right now, strongest first (the manager candidate first).
+def _params_from_name(name: str) -> float:
+    """Best-effort parameter count from a model id ('qwen3-235b-a22b' → 235)."""
+    text = (name or "").lower()
+    mixture = re.search(r"(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)b", text)
+    if mixture:
+        try:
+            return float(mixture.group(1)) * float(mixture.group(2))
+        except ValueError:
+            return 0.0
+    plain = re.search(r"(\d+(?:\.\d+)?)b", text)
+    if plain:
+        try:
+            return float(plain.group(1))
+        except ValueError:
+            return 0.0
+    return 0.0
 
-    Reads the device-level local model group state; falls back to any
-    ``local-llama-*`` endpoints registered in the database when the group
-    state file is missing (e.g. a hand-rolled setup).
+
+def _cloud_workers_from_db(owner: str, speeds: Dict[str, float], disabled: set) -> List[SwarmWorker]:
+    """Remote LLM endpoints as optional workers (cloud assist, opt-in).
+
+    Tier is guessed from the model id; power from the name where possible, so
+    a huge remote ranks as a specialist, never as the MANAGER while any local
+    model is alive (see build_roster — local-first is deliberate).
     """
+    try:
+        from core.database import ModelEndpoint, SessionLocal
+        from src.auth_helpers import owner_filter
+        db = SessionLocal()
+        try:
+            q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
+            rows = owner_filter(q, ModelEndpoint, owner).all()
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.warning("swarm cloud roster unavailable: %s", exc)
+        return []
+
+    workers: List[SwarmWorker] = []
+    for row in rows:
+        row_id = getattr(row, "id", "") or ""
+        if row_id.startswith("local-llama-"):
+            continue  # already covered by the group state / local fallback
+        if (getattr(row, "model_type", "llm") or "llm") != "llm":
+            continue
+        base_url = getattr(row, "base_url", "") or ""
+        if not base_url:
+            continue
+        try:
+            hidden = set(json.loads(getattr(row, "hidden_models", None) or "[]"))
+        except (ValueError, TypeError):
+            hidden = set()
+        try:
+            models = [m for m in json.loads(getattr(row, "cached_models", None) or "[]") if isinstance(m, str)]
+        except (ValueError, TypeError):
+            models = []
+        models = [m for m in models if m not in hidden][:3]
+        if not models:
+            continue
+        for model in models:
+            spec_id = f"remote:{row_id}:{model}"
+            lower = model.lower()
+            tier = "general"
+            if "cod" in lower:
+                tier = "coding"
+            elif any(tag in lower for tag in ("think", "reason", "r1", "o1", "o3")):
+                tier = "reasoning"
+            workers.append(SwarmWorker(
+                spec_id=spec_id,
+                label=model.split("/")[-1][:48],
+                model_id=model,
+                base_url=base_url,
+                endpoint_id=row_id,
+                tier=tier,
+                thinking=tier == "reasoning",
+                vision=any(tag in lower for tag in ("vl", "vision")),
+                params_b=_params_from_name(model),
+                moe="x" in lower and "b" in lower,
+                role="Remote",
+                measured_tps=float(speeds.get(spec_id) or 0.0),
+                enabled=spec_id not in disabled,
+                remote=True,
+                api_key=getattr(row, "api_key", "") or "",
+            ))
+    return workers
+
+
+def build_roster(owner: str = "") -> List[SwarmWorker]:
+    """Everyone on the team right now — local models first, then (opt-in)
+    remote specialists. The strongest LOCAL model manages; a remote model only
+    leads when there is no local model at all."""
+    settings = load_swarm_settings()
     state = _group_state()
     raw_models = state.get("models") if isinstance(state, dict) else None
     workers: List[SwarmWorker] = []
     speeds = _load_speeds()
-    disabled = set(load_swarm_settings().get("disabled_workers") or [])
+    disabled = set(settings.get("disabled_workers") or [])
 
     if isinstance(raw_models, list) and raw_models:
         for entry in raw_models:
@@ -336,6 +427,8 @@ def build_roster(owner: str = "") -> List[SwarmWorker]:
             try:
                 q = db.query(ModelEndpoint).filter(ModelEndpoint.id.like("local-llama-%"))
                 for row in owner_filter(q, ModelEndpoint, owner).all():
+                    if not (getattr(row, "id", "") or "").startswith("local-llama-"):
+                        continue  # remote rows are cloud-assist material, not locals
                     spec = _spec_by_id(row.id.removeprefix("local-llama-"))
                     spec_id = spec.id if spec else row.id
                     models = []
@@ -365,11 +458,16 @@ def build_roster(owner: str = "") -> List[SwarmWorker]:
         except Exception as exc:
             logger.warning("swarm roster fallback failed: %s", exc)
 
-    workers.sort(key=lambda w: w.power, reverse=True)
-    if workers:
-        workers[0].is_manager = True
-        workers[0].role = "Manager"
-    return workers
+    # Cloud assist (opt-in): remote specialists join AFTER the locals, so the
+    # manager is always the strongest LOCAL model while one exists.
+    if settings.get("cloud_workers"):
+        workers.extend(_cloud_workers_from_db(owner, speeds, disabled))
+
+    ordered = sorted(workers, key=lambda w: (w.remote, -w.power))
+    if ordered:
+        ordered[0].is_manager = True
+        ordered[0].role = "Manager"
+    return ordered
 
 
 # ── Specialist routing ───────────────────────────────────────────────────────
@@ -519,11 +617,15 @@ def fallback_plan(message: str) -> List[Dict[str, str]]:
 
 
 # ── LLM calls (OpenAI-compatible, local llama-server endpoints) ──────────────
+def _auth_headers(api_key: str = "") -> Dict[str, str]:
+    return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+
 async def _chat(url: str, model: str, messages: List[Dict[str, str]], timeout: float,
-                temperature: float = 0.4) -> Tuple[str, Dict[str, Any]]:
+                temperature: float = 0.4, api_key: str = "") -> Tuple[str, Dict[str, Any]]:
     """Non-streaming completion → (text, usage)."""
     import httpx
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, headers=_auth_headers(api_key)) as client:
         resp = await client.post(url, json={
             "model": model,
             "messages": messages,
@@ -538,10 +640,10 @@ async def _chat(url: str, model: str, messages: List[Dict[str, str]], timeout: f
 
 
 async def _chat_stream(url: str, model: str, messages: List[Dict[str, str]], timeout: float,
-                       temperature: float = 0.5):
+                       temperature: float = 0.5, api_key: str = ""):
     """Streaming completion — yields content deltas."""
     import httpx
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, headers=_auth_headers(api_key)) as client:
         async with client.stream("POST", url, json={
             "model": model,
             "messages": messages,
@@ -611,14 +713,40 @@ class StepResult:
     error: str = ""
 
 
+def candidate_workers(workers: List[SwarmWorker], kind: str, limit: int = 2) -> List[SwarmWorker]:
+    """Best specialist first, then the next-best — the failover order."""
+    picks: List[SwarmWorker] = []
+    pool = list(workers)
+    while len(picks) < limit:
+        pick = route_worker(pool, kind)
+        if pick is None or any(pick is w for w in picks):
+            break
+        picks.append(pick)
+        pool = [w for w in pool if w is not pick]
+    return picks
+
+
+def pick_critic(workers: List[SwarmWorker], manager: SwarmWorker) -> SwarmWorker:
+    """The sharpest checker: the strongest thinking model that ISN'T the
+    manager (fresh eyes), falling back to the manager itself."""
+    candidates = [w for w in workers if w.enabled and w.base_url and not w.is_manager]
+    thinkers = [w for w in candidates if w.thinking] or candidates
+    return max(thinkers, key=lambda w: w.power) if thinkers else manager
+
+
 async def _run_step(step: Dict[str, str], index: int, workers: List[SwarmWorker],
-                    knowledge: List[Dict[str, Any]], internet: bool) -> Tuple[StepResult, Optional[Dict[str, str]]]:
-    """Run one specialist step. Returns (result, extra_sources)."""
+                    knowledge: List[Dict[str, Any]], internet: bool):
+    """Run one specialist step as an async GENERATOR of events:
+
+    step_delta (live text) → [step_retry on failure] → step_done
+    If the first-choice specialist fails, the next-best one takes over
+    automatically (auto-failover) before the step is declared failed.
+    """
     kind = step.get("kind", "general")
     task = step.get("task", "")
     started = time.monotonic()
 
-    research_sources: Optional[Dict[str, str]] = None
+    web_sources: Optional[List[Dict[str, str]]] = None
     context_blocks: List[str] = []
 
     if kind == "research":
@@ -626,22 +754,26 @@ async def _run_step(step: Dict[str, str], index: int, workers: List[SwarmWorker]
         if internet:
             digest, sources = await web_research(task)
         if sources:
-            research_sources = {"digest": digest, "sources": json.dumps(sources)}
+            web_sources = sources
             context_blocks.append("Live web findings:\n" + (digest[:4000] or "(no results)"))
         elif internet:
             context_blocks.append("Web search returned nothing useful — rely on your own knowledge.")
         else:
             context_blocks.append("(internet disabled — answer from knowledge)")
 
-    worker = route_worker(workers, kind)
-    if worker is None:
-        return StepResult(index, kind, task, "nobody", "", False, error="no worker available"), research_sources
+    attempts = candidate_workers(workers, kind)
+    if not attempts:
+        yield {"type": "step_done", **asdict(StepResult(index, kind, task, "nobody", "", False,
+                                                        error="no worker available")),
+               "web_sources": web_sources}
+        return
 
     known = "\n".join(f"- {e.get('text', '')}" for e in knowledge[:KNOWLEDGE_INJECT_LIMIT])
     system = (
         f"You are the {KIND_LABEL.get(kind, 'General')} specialist of the psd.ai swarm. "
         f"Work ONLY on this step; be precise and compact (max ~180 words). "
-        f"Do not greet, do not restate the whole request."
+        + ("If you write code, give the exact code in a fenced block. " if kind == "coding" else "")
+        + "Do not greet, do not restate the whole request."
     )
     user_parts = [f"Step ({KIND_LABEL.get(kind, 'general')}): {task}"]
     if known:
@@ -652,27 +784,66 @@ async def _run_step(step: Dict[str, str], index: int, workers: List[SwarmWorker]
         {"role": "user", "content": "\n\n".join(user_parts)},
     ]
 
-    url = worker.base_url.rstrip("/") + "/chat/completions"
-    try:
-        text, usage = await _chat(url, worker.model_id, messages, timeout=WORKER_TIMEOUT_S)
+    last_error = ""
+    for attempt, worker in enumerate(attempts[:2]):
+        if attempt:
+            yield {"type": "step_retry", "index": index, "worker": worker.label, "reason": last_error[:160]}
+        text = ""
+        url = worker.base_url.rstrip("/") + "/chat/completions"
+        try:
+            async for piece in _chat_stream(url, worker.model_id, messages,
+                                            timeout=WORKER_TIMEOUT_S, temperature=0.3,
+                                            api_key=worker.api_key):
+                text += piece
+                yield {"type": "step_delta", "index": index, "delta": piece}
+        except Exception as exc:
+            last_error = str(exc)[:300]
+            logger.warning("swarm step %s failed on %s: %s", index, worker.label, last_error)
+            continue
         elapsed = time.monotonic() - started
-        tokens = int(usage.get("completion_tokens") or 0)
+        if not text.strip():
+            last_error = "empty reply"
+            continue
+        tokens = max(1, len(text) // 4)
         tps = record_speed(worker.spec_id, tokens, elapsed) or (tokens / elapsed if elapsed > 0.05 else 0.0)
-        if not text:
-            return StepResult(index, kind, task, worker.label, worker.spec_id, False,
-                              elapsed_s=round(elapsed, 2), error="empty reply"), research_sources
-        return StepResult(index, kind, task, worker.label, worker.spec_id, True,
-                          text=text[:2400], elapsed_s=round(elapsed, 2), tps=round(tps or 0.0, 1)), research_sources
-    except Exception as exc:
-        elapsed = time.monotonic() - started
-        return StepResult(index, kind, task, worker.label, worker.spec_id, False,
-                          elapsed_s=round(elapsed, 2), error=str(exc)[:300]), research_sources
+        yield {"type": "step_done", **asdict(StepResult(
+            index, kind, task, worker.label, worker.spec_id, True,
+            text=text[:2400], elapsed_s=round(elapsed, 2), tps=round(tps or 0.0, 1))),
+            "web_sources": web_sources}
+        return
+
+    yield {"type": "step_done", **asdict(StepResult(
+        index, kind, task, attempts[0].label, attempts[0].spec_id, False,
+        elapsed_s=round(time.monotonic() - started, 2), error=last_error or "failed")),
+        "web_sources": web_sources}
+
+
+
+async def _drive_steps(queue: "asyncio.Queue", gen):
+    """Forward every event of one step generator into the shared queue."""
+    try:
+        async for event in gen:
+            await queue.put(event)
+    except Exception as exc:  # a crashed step must not sink the turn
+        logger.warning("swarm step crashed: %s", exc)
+        await queue.put({"type": "step_done", "index": -1, "kind": "?", "task": "",
+                         "worker": "?", "worker_spec": "", "ok": False,
+                         "text": "", "elapsed_s": 0.0, "tps": 0.0,
+                         "error": str(exc)[:200], "web_sources": None})
+    finally:
+        await queue.put(None)
+
+
+def _chunks(text: str, size: int = 80):
+    for i in range(0, len(text), size):
+        yield text[i:i + size]
 
 
 async def orchestrate(message: str, owner: str = "", history: Optional[List[Dict[str, str]]] = None):
     """The full swarm turn. An async GENERATOR of event dicts:
 
-    phase → plan → step_start → step_done → synth_delta → final → error
+    phase(plan) → plan → step_delta* → [step_retry] → step_done*
+    → phase(synthesize) → [phase(verify)] → synth_delta* → final → error?
     """
     settings = load_swarm_settings()
     workers = build_roster(owner)
@@ -696,6 +867,7 @@ async def orchestrate(message: str, owner: str = "", history: Optional[List[Dict
                 message, workers, knowledge, bool(settings.get("internet")), max_steps=max_steps)}],
             timeout=60.0,
             temperature=0.2,
+            api_key=manager.api_key,
         )
     except Exception as exc:
         logger.warning("swarm manager plan failed: %s", exc)
@@ -710,47 +882,59 @@ async def orchestrate(message: str, owner: str = "", history: Optional[List[Dict
         {**step, "worker": _assignee(step), "kind_label": KIND_LABEL.get(step["kind"], step["kind"])}
         for step in steps
     ]}
+
     results: List[StepResult] = []
-    extra_sources: List[Dict[str, str]] = []
+    all_sources: List[Dict[str, str]] = []
+
+    async def _absorb(event: dict):
+        """Collect step results + web sources from a step event."""
+        if event.get("type") != "step_done":
+            return
+        sources = event.pop("web_sources", None)
+        if isinstance(sources, list):
+            for src in sources:
+                if src.get("url") and src not in all_sources:
+                    all_sources.append(src)
+        data = {k: v for k, v in event.items() if k != "type"}
+        try:
+            results.append(StepResult(**data))
+        except TypeError:
+            logger.warning("swarm: malformed step_done event skipped")
+
     parallel = bool(settings.get("parallel")) and 1 < len(steps) <= 4
     if parallel:
-        pending = [
-            asyncio.create_task(_run_step(step, i, workers, knowledge, bool(settings.get("internet"))))
+        queue: asyncio.Queue = asyncio.Queue()
+        drivers = [
+            asyncio.create_task(_drive_steps(
+                queue, _run_step(step, i, workers, knowledge, bool(settings.get("internet")))))
             for i, step in enumerate(steps)
         ]
-        for task in asyncio.as_completed(pending):
-            result, sources = await task
-            results.append(result)
-            if sources:
-                extra_sources.append(sources)
-            yield {"type": "step_done", **asdict(result)}
+        finished = 0
+        while finished < len(drivers):
+            event = await queue.get()
+            if event is None:
+                finished += 1
+                continue
+            await _absorb(event)
+            yield event
+        await asyncio.gather(*drivers, return_exceptions=True)
     else:
         for i, step in enumerate(steps):
-            yield {"type": "step_start", "index": i, "kind": step["kind"], "task": step["task"]}
-            result, sources = await _run_step(step, i, workers, knowledge, bool(settings.get("internet")))
-            results.append(result)
-            if sources:
-                extra_sources.append(sources)
-            yield {"type": "step_done", **asdict(result)}
+            async for event in _run_step(step, i, workers, knowledge, bool(settings.get("internet"))):
+                await _absorb(event)
+                yield event
 
     results.sort(key=lambda r: r.index)
 
-    # 3 ── the manager synthesises the final answer (streamed)
+    # 3 ── the manager writes the answer; the critic verifies it before it ships
     yield {"type": "phase", "phase": "synthesize", "manager": manager.to_dict()}
     reports = []
-    all_sources: List[Dict[str, str]] = []
     for r in results:
+        label = KIND_LABEL.get(r.kind, r.kind)
         if r.ok and r.text:
-            reports.append(f"[{r.worker} · {KIND_LABEL.get(r.kind, r.kind)}] {r.text}")
+            reports.append(f"[{r.worker} · {label}] {r.text}")
         elif not r.ok:
-            reports.append(f"[{r.worker} · {KIND_LABEL.get(r.kind, r.kind)}] FAILED: {r.error}")
-    for extra in extra_sources:
-        try:
-            for s in json.loads(extra.get("sources") or "[]"):
-                if s.get("url") and s not in all_sources:
-                    all_sources.append(s)
-        except ValueError:
-            pass
+            reports.append(f"[{r.worker} · {label}] FAILED: {r.error}")
 
     known = "\n".join(f"- {e.get('text', '')}" for e in knowledge)
     recent = ""
@@ -766,39 +950,85 @@ async def orchestrate(message: str, owner: str = "", history: Optional[List[Dict
         + "Specialist reports:\n" + ("\n\n".join(reports) or "(none)")
         + ("\n\nWeb sources to cite:\n" + "\n".join(f"[{i+1}] {src['url']}" for i, src in enumerate(all_sources)) if all_sources else "")
         + "\n\nWrite the final answer to the user yourself. Combine the reports, "
-          "drop failures quietly (or note them in one short line), keep it clear and complete."
+          "drop failures quietly (or note them in one short line), keep it clear and complete. "
+          "Structure it like a top-tier assistant: short intro, clear sections or bullets when "
+          "they help, code in fenced blocks, and say plainly when something is uncertain."
     )
     synth_messages = [
         {"role": "system", "content": (
-            "You are the MANAGER of the psd.ai swarm — the strongest local model on this "
-            "machine. Specialist workers did the sub-tasks; now give the user ONE clear, "
-            "correct, well-structured final answer. Cite web sources as [1], [2] when used."
+            "You are the MANAGER of the psd.ai swarm — the strongest model on this machine. "
+            "Specialist workers did the sub-tasks; now give the user ONE clear, correct, "
+            "well-structured final answer. Cite web sources as [1], [2] when used."
         )},
         {"role": "user", "content": synth_user[:12000]},
     ]
+    synth_url = manager.base_url.rstrip("/") + "/chat/completions"
+    verify = bool(settings.get("verify"))
 
     final_text = ""
     started = time.monotonic()
-    synth_url = manager.base_url.rstrip("/") + "/chat/completions"
     try:
-        async for piece in _chat_stream(synth_url, manager.model_id, synth_messages, timeout=MANAGER_TIMEOUT_S):
-            final_text += piece
-            yield {"type": "synth_delta", "delta": piece}
+        if verify:
+            # Draft quietly, let the critic attack it, only then show the user
+            # one polished answer. (Streaming a draft and then replacing it
+            # would feel broken — so the polish happens before the first token.)
+            draft, _ = await _chat(synth_url, manager.model_id, synth_messages,
+                                   timeout=MANAGER_TIMEOUT_S, api_key=manager.api_key)
+            final_text = draft
+            if draft.strip():
+                critic = pick_critic(live, manager)
+                yield {"type": "phase", "phase": "verify", "manager": manager.to_dict(),
+                       "critic": critic.label}
+                critic_reply = ""
+                try:
+                    critic_reply, _ = await _chat(
+                        critic.base_url.rstrip("/") + "/chat/completions",
+                        critic.model_id,
+                        [{"role": "system", "content": (
+                            "You are the swarm's quality CRITIC. Compare the DRAFT answer against "
+                            "the specialist reports. Fix factual errors, remove invented details, "
+                            "add anything important that is missing, keep the structure. "
+                            "If the draft is already correct and complete, reply with exactly: KEEP. "
+                            "Otherwise reply with the corrected full answer only."
+                        )},
+                         {"role": "user", "content": (
+                             f"User request: {message[:800]}\n\nSpecialist reports:\n"
+                             + ("\n\n".join(reports) or "(none)")[:6000] + "\n\n"
+                             + ("Web sources:\n" + "\n".join(
+                                 f"[{i+1}] {src['url']}" for i, src in enumerate(all_sources)
+                             ) + "\n" if all_sources else "")
+                             + f"\nDRAFT ANSWER:\n{draft[:6000]}"
+                         )}],
+                        timeout=MANAGER_TIMEOUT_S,
+                        temperature=0.2,
+                        api_key=critic.api_key,
+                    )
+                except Exception as exc:
+                    logger.warning("swarm critic unavailable, shipping the draft: %s", exc)
+                verdict = (critic_reply or "").strip()
+                if verdict and not verdict.upper().startswith("KEEP") and len(verdict) >= 30:
+                    final_text = verdict
+        else:
+            async for piece in _chat_stream(synth_url, manager.model_id, synth_messages,
+                                            timeout=MANAGER_TIMEOUT_S, api_key=manager.api_key):
+                final_text += piece
+                yield {"type": "synth_delta", "delta": piece}
     except Exception as exc:
-        # Streaming failed — fall back to a non-streaming synthesis, then to reports.
-        logger.warning("swarm synth stream failed: %s", exc)
-        try:
-            final_text, _ = await _chat(synth_url, manager.model_id, synth_messages, timeout=MANAGER_TIMEOUT_S)
-            yield {"type": "synth_delta", "delta": final_text}
-        except Exception as exc2:
-            yield {"type": "error", "error": f"Manager synthesis failed: {str(exc2)[:200]}"}
-            ok_reports = [r for r in results if r.ok and r.text]
-            if ok_reports:
-                yield {"type": "final", "text": "\n\n".join(r.text for r in ok_reports), "sources": all_sources, "steps": [asdict(r) for r in results]}
-            return
+        # Synthesis failed — fall back to the raw specialist reports.
+        logger.warning("swarm synthesis failed: %s", exc)
+        yield {"type": "error", "error": f"Manager synthesis failed: {str(exc)[:200]}"}
+        ok_reports = [r for r in results if r.ok and r.text]
+        if ok_reports:
+            yield {"type": "final", "text": "\n\n".join(r.text for r in ok_reports),
+                   "sources": all_sources, "steps": [asdict(r) for r in results]}
+        return
+
+    # Ship the (possibly critic-corrected) answer as one streamed reply.
+    if verify:
+        for piece in _chunks(final_text):
+            yield {"type": "synth_delta", "delta": piece}
     elapsed = time.monotonic() - started
-    usage_tokens = len(final_text) // 4
-    record_speed(manager.spec_id, usage_tokens, elapsed)
+    record_speed(manager.spec_id, max(1, len(final_text) // 4), elapsed)
 
     yield {"type": "final", "text": final_text, "sources": all_sources, "steps": [asdict(r) for r in results]}
 
@@ -816,6 +1046,7 @@ async def orchestrate(message: str, owner: str = "", history: Optional[List[Dict
                 )}],
                 timeout=45.0,
                 temperature=0.1,
+                api_key=manager.api_key,
             )
             for line in (learn_text or "").splitlines():
                 line = line.strip().lstrip("-•* ").strip()
@@ -824,6 +1055,7 @@ async def orchestrate(message: str, owner: str = "", history: Optional[List[Dict
                 add_knowledge(line, owner=owner, source="swarm")
         except Exception as exc:
             logger.debug("swarm learn skipped: %s", exc)
+
 
 
 def status(owner: str = "") -> Dict[str, Any]:

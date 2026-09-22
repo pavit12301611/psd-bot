@@ -536,6 +536,7 @@ export interface SwarmWorkerInfo {
   quant: string;
   port: number;
   role: string;
+  remote: boolean;
   measured_tps: number;
   est_tps: number;
   speed_tps: number;
@@ -551,6 +552,8 @@ export interface SwarmStatus {
     internet: boolean;
     parallel: boolean;
     auto_learn: boolean;
+    verify: boolean;
+    cloud_workers: boolean;
     max_steps: number;
     disabled_workers: string[];
   };
@@ -570,8 +573,10 @@ export interface SwarmStepDone {
   error: string;
 }
 export interface SwarmHandlers {
-  onPhase?: (phase: string, manager: SwarmWorkerInfo | null) => void;
+  onPhase?: (phase: string, manager: SwarmWorkerInfo | null, critic?: string) => void;
   onPlan?: (steps: { kind: string; task: string; worker: string; kind_label: string }[]) => void;
+  onStepDelta?: (index: number, delta: string) => void;
+  onStepRetry?: (index: number, fallbackWorker: string) => void;
   onStepDone?: (step: SwarmStepDone) => void;
   onSynthDelta?: (delta: string) => void;
   onFinal?: (payload: { text: string; sources: { url: string; title?: string }[]; steps: SwarmStepDone[] }) => void;
@@ -580,7 +585,7 @@ export interface SwarmHandlers {
 }
 export const swarm = {
   status: () => get<SwarmStatus>("/api/swarm/status"),
-  settings: (update: Partial<Record<"internet" | "parallel" | "auto_learn", boolean> & { max_steps: number; disabled_workers: string[] }>) =>
+  settings: (update: Partial<Record<"internet" | "parallel" | "auto_learn" | "verify" | "cloud_workers", boolean> & { max_steps: number; disabled_workers: string[] }>) =>
     postJson<SwarmStatus["settings"]>("/api/swarm/settings", update),
   knowledge: () => get<{ entries: { id: string; text: string; source: string; url?: string; ts: number }[] }>("/api/swarm/knowledge"),
   addKnowledge: (text: string) => postJson("/api/swarm/knowledge", { text }),
@@ -605,9 +610,11 @@ export const swarm = {
             return;
           }
           switch (ev.type) {
-            case "phase": h.onPhase?.(ev.phase, ev.manager || null); break;
+            case "phase": h.onPhase?.(ev.phase, ev.manager || null, ev.critic); break;
             case "plan": h.onPlan?.(ev.steps || []); break;
             case "step_start": break;
+            case "step_delta": h.onStepDelta?.(Number(ev.index), String(ev.delta || "")); break;
+            case "step_retry": h.onStepRetry?.(Number(ev.index), String(ev.worker || "")); break;
             case "step_done": h.onStepDone?.(ev as SwarmStepDone); break;
             case "synth_delta": h.onSynthDelta?.(ev.delta || ""); break;
             case "final": h.onFinal?.({ text: ev.text || "", sources: ev.sources || [], steps: ev.steps || [] }); break;

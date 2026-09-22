@@ -164,16 +164,30 @@ model group working **together** on one request, in one view:
   is routed by specialty match first, then by power (total params) × speed
   (measured tok/s on your machine), so each step is both quick and strong.
 * **Independent steps run in parallel** — up to six models crunching at once —
-  and the manager streams one clean, combined answer.
+  with each specialist's text streaming live into its lane, and the manager
+  writes one clean, combined answer.
+* **A critic checks every answer before you see it.** The manager drafts, the
+  sharpest "thinking" worker that isn't the manager attacks the draft —
+  factual errors fixed, invented details removed, missing pieces added — and
+  only the polished answer ships. (Verify answers on/off in Swarm settings.)
+* **Auto-failover.** If a specialist crashes or returns nothing mid-step, the
+  next-best model for that job takes over automatically — a dead endpoint
+  never costs you an answer.
 * **Full internet access for research steps.** The scout searches the live
   web through psd.ai's own search service, and the manager cites the real
   sources it used. (Toggle: Internet on/off in the Swarm header.)
 * **The swarm remembers.** Durable facts from every swarm turn — or from any
   URL you hand it ("Learn from a page") — are stored locally and injected
   into future swarm prompts. One click to forget.
+* **Cloud assist (opt-in).** Remote endpoints you configured in
+  Settings → Models (OpenAI, Anthropic, OpenRouter…) can join as specialist
+  workers for steps the local team can't nail. Local models always manage and
+  the default is fully offline — flip **Cloud assist** on in Swarm settings
+  when you want the heavy artillery. API keys stay in the engine; the UI
+  never sees them.
 * **You control the team.** Switch any worker off/on from the roster cards,
-  flip parallel / auto-learn / plan-steps in Swarm settings. Everything is
-  admin-gated like the rest of the app.
+  flip parallel / verify / auto-learn / cloud-assist / plan-steps in Swarm
+  settings. Everything is admin-gated like the rest of the app.
 
 The engine lives in `psd.ai/src/swarm.py` (no extra service — it talks to the
 same llama-server endpoints the app already runs) with routes under

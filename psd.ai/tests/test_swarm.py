@@ -238,24 +238,32 @@ class _FakeResponse:
 
 @pytest.mark.anyio
 async def test_orchestrate_runs_steps_and_synthesizes(monkeypatch):
-    """Full turn over fakes: plan → parallel specialist steps → streamed answer."""
+    """Full turn over fakes: plan → parallel specialist steps → critic → answer."""
     roster = _team()
     monkeypatch.setattr(swarm, "build_roster", lambda owner="": roster)
     monkeypatch.setattr(swarm, "search_knowledge", lambda q, owner="", limit=6: [])
 
-    async def fake_chat(url, model, messages, timeout, temperature=0.4):
-        if "steps" in messages[-1]["content"]:
+    async def fake_chat(url, model, messages, timeout, temperature=0.4, api_key=""):
+        prompt = messages[-1]["content"]
+        if "ONLY JSON" in prompt:
             return ('{"steps":[{"kind":"coding","task":"write it"},{"kind":"reasoning","task":"check it"}]}', {})
-        return ("ok", {"completion_tokens": 50})
+        if "DRAFT ANSWER" in prompt:
+            return ("KEEP", {})
+        if "durable facts" in prompt:
+            return ("NONE", {})
+        return ("The final answer", {"completion_tokens": 50})
 
-    async def fake_stream(url, model, messages, timeout, temperature=0.5):
-        for piece in ["The ", "final ", "answer"]:
+    async def fake_stream(url, model, messages, timeout, temperature=0.5, api_key=""):
+        for piece in ["unused"]:
             yield piece
 
     async def fake_run_step(step, index, workers, knowledge, internet):
         w = swarm.route_worker(workers, step["kind"])
-        return swarm.StepResult(index, step["kind"], step["task"], w.label, w.spec_id,
-                                True, text=f"{w.label} report"), None
+        yield {"type": "step_delta", "index": index, "delta": "working"}
+        yield {"type": "step_done", "index": index, "kind": step["kind"], "task": step["task"],
+               "worker": w.label, "worker_spec": w.spec_id, "ok": True,
+               "text": f"{w.label} report", "elapsed_s": 0.1, "tps": 99.0, "error": "",
+               "web_sources": None}
 
     monkeypatch.setattr(swarm, "_chat", fake_chat)
     monkeypatch.setattr(swarm, "_chat_stream", fake_stream)
@@ -264,6 +272,10 @@ async def test_orchestrate_runs_steps_and_synthesizes(monkeypatch):
     events = [e async for e in swarm.orchestrate("build a parser and verify it")]
     kinds = [e["type"] for e in events]
     assert kinds[0] == "phase" and "plan" in kinds and "synth_delta" in kinds
+    assert "step_delta" in kinds  # worker text streams live
+    # verify pass ran: plan → synthesize → verify → chunked answer
+    phases = [e["phase"] for e in events if e["type"] == "phase"]
+    assert phases == ["plan", "synthesize", "verify"], phases
     final = next(e for e in events if e["type"] == "final")
     assert final["text"] == "The final answer"
     plan = next(e for e in events if e["type"] == "plan")
@@ -271,6 +283,79 @@ async def test_orchestrate_runs_steps_and_synthesizes(monkeypatch):
     # both specialists actually ran (labels in the fixture are the spec ids)
     done = [e for e in events if e["type"] == "step_done"]
     assert {e["worker"] for e in done} == {"qwen3-coder-next", "qwen3.5-27b"}
+
+
+@pytest.mark.anyio
+async def test_critic_replaces_a_bad_draft(monkeypatch):
+    """verify on + a critic that flags problems → the corrected answer ships."""
+    roster = _team()
+    monkeypatch.setattr(swarm, "build_roster", lambda owner="": roster)
+    monkeypatch.setattr(swarm, "search_knowledge", lambda q, owner="", limit=6: [])
+
+    async def fake_chat(url, model, messages, timeout, temperature=0.4, api_key=""):
+        prompt = messages[-1]["content"]
+        if "ONLY JSON" in prompt:
+            return ('{"steps":[{"kind":"general","task":"do it"}]}', {})
+        if "DRAFT ANSWER" in prompt:
+            return ("CORRECTED: the parser must handle UTF-8, here is the full fix…", {})
+        if "durable facts" in prompt:
+            return ("NONE", {})
+        return ("draft with a factual error", {})
+
+    async def fake_step(step, index, workers, knowledge, internet):
+        yield {"type": "step_done", "index": index, "kind": step["kind"], "task": step["task"],
+               "worker": "w", "worker_spec": "w", "ok": True, "text": "report",
+               "elapsed_s": 0.1, "tps": 0.0, "error": "", "web_sources": None}
+
+    monkeypatch.setattr(swarm, "_chat", fake_chat)
+    monkeypatch.setattr(swarm, "_run_step", fake_step)
+
+    events = [e async for e in swarm.orchestrate("explain x")]
+    final = next(e for e in events if e["type"] == "final")
+    assert final["text"].startswith("CORRECTED")
+    verify_ev = next(e for e in events if e.get("phase") == "verify")
+    assert verify_ev["critic"]  # the GUI can name the critic
+
+
+@pytest.mark.anyio
+async def test_step_failover_moves_to_the_next_specialist(monkeypatch):
+    """First-choice worker crashes mid-step → step_retry, then the fallback ships."""
+    roster = _team()
+    monkeypatch.setattr(swarm, "search_knowledge", lambda q, owner="", limit=6: [])
+
+    calls = []
+
+    async def fake_stream(url, model, messages, timeout, temperature=0.5, api_key=""):
+        calls.append(model)
+        if "qwen3-coder-next" in model:
+            raise RuntimeError("connection reset")
+        for piece in ["fallback ", "report"]:
+            yield piece
+
+    monkeypatch.setattr(swarm, "_chat_stream", fake_stream)
+
+    events = []
+    async for ev in swarm._run_step({"kind": "coding", "task": "write it"}, 0, roster, [], False):
+        events.append(ev)
+
+    kinds = [e["type"] for e in events]
+    assert "step_retry" in kinds
+    retry = next(e for e in events if e["type"] == "step_retry")
+    assert retry["worker"] == "qwen3.5-27b"  # the next-best coding candidate
+    done = next(e for e in events if e["type"] == "step_done")
+    assert done["ok"] and done["worker"] == "qwen3.5-27b"
+
+
+@pytest.mark.anyio
+async def test_step_reports_failure_only_after_the_fallback_also_fails(monkeypatch):
+    async def failing_stream(url, model, messages, timeout, temperature=0.5, api_key=""):
+        raise RuntimeError("down")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(swarm, "_chat_stream", failing_stream)
+    events = [e async for e in swarm._run_step({"kind": "coding", "task": "t"}, 0, _team(), [], False)]
+    done = next(e for e in events if e["type"] == "step_done")
+    assert not done["ok"] and "down" in done["error"]
 
 
 def test_status_reports_the_team(monkeypatch):
@@ -281,3 +366,131 @@ def test_status_reports_the_team(monkeypatch):
     assert st["manager"]["spec_id"] == "gpt-oss-120b"
     assert len(st["workers"]) == 6
     assert st["group"]["count"] == 6
+
+
+# ── cloud assist (opt-in remote specialists) ─────────────────────────────────
+class _FakeRow:
+    def __init__(self, row_id, name, base_url, models, api_key="", hidden="[]", model_type="llm"):
+        self.id = row_id
+        self.name = name
+        self.base_url = base_url
+        self.cached_models = json.dumps(models)
+        self.hidden_models = hidden
+        self.model_type = model_type
+        self.api_key = api_key
+        self.is_enabled = True
+        self.owner = None
+
+
+class _FakeQuery:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def filter(self, *_):
+        return self
+
+    def all(self):
+        return self._rows
+
+
+class _FakeDB:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def query(self, _model):
+        return _FakeQuery(self._rows)
+
+    def close(self):
+        pass
+
+
+@pytest.fixture()
+def _fake_endpoint_db(monkeypatch):
+    """A stub core.database with one local + one huge remote endpoint."""
+    rows = [
+        _FakeRow("local-llama-qwen3.5-9b", "psd.ai Local Llama · Qwen3.5 9B",
+                 "http://127.0.0.1:8080/v1", ["psd-qwen3.5-9b"]),
+        _FakeRow("openrouter", "OpenRouter", "https://openrouter.ai/api/v1",
+                 ["qwen/qwen3-235b-a22b", "openai/gpt-5.2-codex"],
+                 api_key="sk-SUPER-SECRET"),
+    ]
+
+    import sys as _sys
+    import types as _types
+
+    class _FakeColumn:
+        def like(self, *_):
+            return None
+
+        def __eq__(self, _other):
+            return True
+
+    stub = _types.ModuleType("core.database")
+    stub.ModelEndpoint = type("ModelEndpoint", (), {
+        "id": _FakeColumn(), "is_enabled": True, "model_type": "llm", "owner": None,
+    })
+    stub.SessionLocal = lambda: _FakeDB(rows)
+    monkeypatch.setitem(_sys.modules, "core.database", stub)
+
+    import src.auth_helpers as auth_helpers
+    monkeypatch.setattr(auth_helpers, "owner_filter", lambda q, m, u: q)
+    return rows
+
+
+def test_cloud_off_by_default_and_never_without_opt_in(monkeypatch, _fake_endpoint_db):
+    monkeypatch.setattr(swarm, "_group_state", lambda: {})
+    swarm.save_swarm_settings({"cloud_workers": False})
+    roster = swarm.build_roster()
+    assert [w.remote for w in roster] == [False]  # only the local model
+
+
+def test_cloud_opt_in_adds_remote_specialists_but_local_manages(monkeypatch, _fake_endpoint_db):
+    monkeypatch.setattr(swarm, "_group_state", lambda: {})
+    swarm.save_swarm_settings({"cloud_workers": True})
+    roster = swarm.build_roster()
+    remotes = [w for w in roster if w.remote]
+    assert remotes, "remote specialists should join on opt-in"
+    # The MANAGER is always the strongest LOCAL model, never the remote giant.
+    manager = next(w for w in roster if w.is_manager)
+    assert not manager.remote
+    assert manager.spec_id == "qwen3.5-9b"
+    # Coding tier guessed from the name; power parsed from "235b" (a dense
+    # id without a B-suffix, like gpt-5.2-codex, legitimately parses to 0).
+    coder = next(w for w in remotes if "codex" in w.model_id)
+    assert coder.tier == "coding"
+    big = next(w for w in remotes if "235b" in w.model_id)
+    assert big.params_b == 235.0
+    assert big.power > manager.power  # stronger, yet still only a worker
+
+
+def test_cloud_api_keys_never_leak_into_status(monkeypatch, _fake_endpoint_db):
+    monkeypatch.setattr(swarm, "_group_state", lambda: {})
+    swarm.save_swarm_settings({"cloud_workers": True})
+    st = swarm.status()
+    assert "sk-SUPER-SECRET" not in json.dumps(st)
+    for worker in st["workers"]:
+        assert "api_key" not in worker
+
+
+def test_params_from_name_parses_dense_and_moe_ids():
+    assert swarm._params_from_name("qwen3-235b-a22b") == 235.0
+    assert swarm._params_from_name("mixtral-8x7b-instruct") == 56.0
+    assert swarm._params_from_name("gpt-5.2") == 0.0
+
+
+# ── failover candidates ──────────────────────────────────────────────────────
+def test_candidate_workers_orders_specialists_and_never_the_manager():
+    picks = swarm.candidate_workers(_team(), "coding", limit=3)
+    assert [w.tier for w in picks[:1]] == ["coding"]
+    assert all(not w.is_manager for w in picks)
+    assert len(picks) == 3
+
+
+def test_pick_critic_prefers_strongest_thinking_non_manager():
+    team = _team()
+    critic = swarm.pick_critic(team, team[0])
+    assert not critic.is_manager
+    assert critic.thinking
+    # A team with no thinking worker falls back to the strongest non-manager.
+    plain = [_worker("boss", params=30.0, manager=True), _worker("helper", params=8.0)]
+    assert swarm.pick_critic(plain, plain[0]) is plain[1]

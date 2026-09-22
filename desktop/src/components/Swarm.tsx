@@ -24,6 +24,8 @@ import {
   Lightbulb,
   Search,
   Gauge,
+  ShieldCheck,
+  Cloud,
 } from "lucide-react";
 import { useApp } from "../store/app";
 import {
@@ -70,6 +72,9 @@ interface SwarmTurn {
   question: string;
   plan: { kind: string; task: string; worker: string; kind_label: string }[];
   reports: WorkerReport[];
+  live: Record<number, string>;
+  switched: Record<number, string>;
+  critic: string;
   answer: string;
   sources: { url: string; title?: string }[];
   phase: string;
@@ -170,12 +175,14 @@ export default function Swarm() {
 
     setTurns((list) => [
       ...list,
-      { id: turnId, question: text, plan: [], reports: [], answer: "", sources: [], phase: "plan", error: "", ts: Date.now() },
+      { id: turnId, question: text, plan: [], reports: [], live: {}, switched: {}, critic: "", answer: "", sources: [], phase: "plan", error: "", ts: Date.now() },
     ]);
 
     handleRef.current = swarmApi.chat(text, history, {
-      onPhase: (phase) => patchTurn(turnId, (t) => { t.phase = phase; }),
+      onPhase: (phase, _manager, critic) => patchTurn(turnId, (t) => { t.phase = phase; if (critic) t.critic = critic; }),
       onPlan: (steps) => patchTurn(turnId, (t) => { t.plan = steps; }),
+      onStepDelta: (index, delta) => patchTurn(turnId, (t) => { t.live = { ...t.live, [index]: (t.live[index] || "") + delta }; }),
+      onStepRetry: (index, fallbackWorker) => patchTurn(turnId, (t) => { t.switched = { ...t.switched, [index]: fallbackWorker }; }),
       onStepDone: (step: SwarmStepDone) => patchTurn(turnId, (t) => {
         t.reports = [...t.reports.map((r) => (r.index === step.index ? { ...r, ...step } : r))];
         if (!t.reports.some((r) => r.index === step.index)) t.reports = [...t.reports, { ...step }];
@@ -278,6 +285,22 @@ export default function Swarm() {
               </button>
               <button className="pill" data-on={settings.auto_learn} onClick={() => updateSetting({ auto_learn: !settings.auto_learn })}>
                 Auto-learn facts {settings.auto_learn ? "on" : "off"}
+              </button>
+              <button
+                className="pill"
+                data-on={settings.verify}
+                title="A critic model attacks every draft — factual errors fixed, invented details removed — before you see it"
+                onClick={() => updateSetting({ verify: !settings.verify })}
+              >
+                <ShieldCheck size={12} className="inline" /> Verify answers {settings.verify ? "on" : "off"}
+              </button>
+              <button
+                className="pill"
+                data-on={settings.cloud_workers}
+                title="Let remote endpoints you configured in Settings › Models (OpenAI, Anthropic, OpenRouter…) join as specialist workers. Local models always manage; off = fully offline."
+                onClick={() => updateSetting({ cloud_workers: !settings.cloud_workers })}
+              >
+                <Cloud size={12} className="inline" /> Cloud assist {settings.cloud_workers ? "on" : "off"}
               </button>
               <label className="flex items-center gap-2 text-[12px]" style={{ color: "var(--muted)" }}>
                 Plan steps
@@ -415,6 +438,13 @@ export default function Swarm() {
                   </div>
                 )}
 
+                {t.phase === "verify" && (
+                  <div className="flex items-center gap-2 text-[12px]" style={{ color: "var(--muted)" }}>
+                    <ShieldCheck size={13} style={{ color: "var(--accent)" }} />
+                    {t.critic ? `${t.critic} (critic)` : "Critic"} double-checks the draft — facts, missing pieces, structure…
+                  </div>
+                )}
+
                 {/* One lane per planned step — pending lanes spin, finished ones become reports */}
                 {!!t.plan.length && (
                   <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
@@ -423,14 +453,24 @@ export default function Swarm() {
                       if (done) {
                         return <ReportCard key={`${t.id}-lane-${i}`} report={done} open={!!openReports[`${t.id}-${i}`]} onToggle={() => setOpenReports((o) => ({ ...o, [`${t.id}-${i}`]: !o[`${t.id}-${i}`] }))} />;
                       }
+                      const liveTail = (t.live[i] || "").trim();
                       return (
-                        <div key={`${t.id}-lane-${i}`} className="card swarm-step-running flex items-center gap-2 p-3">
-                          <Loader2 size={13} className="animate-spin" style={{ color: KIND_COLOR[step.kind] || "var(--accent)" }} />
-                          <span className="flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: KIND_COLOR[step.kind] }}>
-                            {KIND_ICON[step.kind]} {step.worker}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate text-[11.5px]" style={{ color: "var(--muted)" }}>{step.task}</span>
-                          <span className="shrink-0 text-[10.5px]" style={{ color: "var(--muted)" }}>working…</span>
+                        <div key={`${t.id}-lane-${i}`} className="card swarm-step-running flex flex-col gap-1.5 p-3">
+                          <div className="flex items-center gap-2">
+                            <Loader2 size={13} className="animate-spin" style={{ color: KIND_COLOR[step.kind] || "var(--accent)" }} />
+                            <span className="flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: KIND_COLOR[step.kind] }}>
+                              {KIND_ICON[step.kind]} {step.worker}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate text-[11.5px]" style={{ color: "var(--muted)" }}>{step.task}</span>
+                            <span className="shrink-0 text-[10.5px]" style={{ color: "var(--muted)" }}>
+                              {t.switched[i] ? `switched to ${t.switched[i]}` : "working…"}
+                            </span>
+                          </div>
+                          {liveTail && (
+                            <p className="selectable max-h-20 overflow-hidden text-[11.5px] leading-snug" style={{ color: "var(--muted)" }}>
+                              {liveTail.length > 220 ? `…${liveTail.slice(-220)}` : liveTail}
+                            </p>
+                          )}
                         </div>
                       );
                     })}
@@ -507,7 +547,7 @@ export default function Swarm() {
 }
 
 function WorkerCard({ worker: w, managerCard, onToggle }: { worker: SwarmWorkerInfo; managerCard?: boolean; onToggle: (on: boolean) => void }) {
-  const roleColor = w.is_manager ? "var(--accent)" : w.tier === "coding" ? KIND_COLOR.coding : w.thinking ? KIND_COLOR.reasoning : "var(--muted)";
+  const roleColor = w.is_manager ? "var(--accent)" : w.remote ? "#61afef" : w.tier === "coding" ? KIND_COLOR.coding : w.thinking ? KIND_COLOR.reasoning : "var(--muted)";
   return (
     <motion.div layout className={`card p-3${managerCard && w.enabled ? " swarm-manager" : ""}`} style={{ opacity: w.enabled ? 1 : 0.45, borderColor: w.is_manager ? "var(--accent)" : "var(--border)" }}>
       <div className="flex items-center gap-2">
