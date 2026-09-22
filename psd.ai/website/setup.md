@@ -35,51 +35,73 @@ binds the web UI to `127.0.0.1` by default. If the port is taken, set
 `APP_PORT=7001` in `.env` and recreate the container. Set `APP_BIND=0.0.0.0`
 only when you intentionally want LAN/reverse-proxy access.
 
-> **On Apple Silicon (M-series) Macs:** Docker can't reach the Metal GPU, so
-> Cookbook serves local models on CPU only. For GPU-accelerated model serving,
-> run natively instead — see [Apple Silicon](#apple-silicon) below.
+> **In Docker:** the container cannot reach a GPU unless you pass one
+> through, so Cookbook serves local models on CPU only there. For
+> GPU-accelerated model serving, run natively — see
+> [Native Fedora Linux](#native-fedora-linux) below.
 
-### Native Linux / macOS
+### Native Fedora Linux
+
+On Fedora the one-command path is the repo-root launcher: it installs the
+system packages (including the Rust toolchain) with `dnf`, then builds and
+opens a **native graphical installer window** (`installer/`, Tauri — no
+browser): a real progress bar, the running step, live output, the model-group
+download with percentages, and faults listed properly with Retry / Skip
+buttons. Inside it the venv, dependencies, setup and the desktop app build
+run, the local model group downloads, and a Launch button opens the app.
+Headless session, no cargo, or `--no-gui`: the same steps run in the
+terminal with a browser dashboard at `http://127.0.0.1:7123` (loopback
+only) as fallback progress view.
+
 ```bash
 git clone https://github.com/pavit12301611/psd-bot.git
-cd psd_ai
+cd psd-bot
+./run.sh
+```
+
+Headless server instead of the desktop app:
+
+```bash
+git clone https://github.com/pavit12301611/psd-bot.git
+cd psd-bot/psd.ai
+sudo dnf install python3 python3-devel gcc gcc-c++ make git tmux
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 python setup.py
 python -m uvicorn app:app --host 127.0.0.1 --port 7000
 ```
+
+To have it start with your login instead, install the systemd user unit:
+`./install-service.sh && systemctl --user enable --now psd-ai-ui`.
+
 Requirements: Python 3.11+. Cookbook also needs `tmux` for background model
 downloads and serves. The app itself is lightweight; local model serving is the
 heavy part and depends on the model, runtime, GPU, and VRAM, so small hosts can
 connect to API or remote model servers instead. Use `--host 0.0.0.0` only when you intentionally want LAN/reverse-proxy access.
 
-### Apple Silicon
-Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an
-M-series Mac, run psd.ai natively:
+### GPU, and exposing it on a LAN/Tailscale
+
+A real AMD or NVIDIA GPU is picked up automatically (ROCm, CUDA or Vulkan
+builds of llama.cpp, whichever the hardware supports). Intel and AMD
+integrated graphics are treated as CPU-only: ~128 MB of reported VRAM offloads
+nothing useful. vLLM and SGLang serving needs a CUDA or ROCm GPU, which is a
+Linux-only path anyway.
+
+By default everything binds to loopback. To reach psd.ai from a phone over a
+trusted LAN/VPN such as Tailscale, bind all interfaces:
 
 ```bash
-git clone https://github.com/pavit12301611/psd-bot.git
-cd psd_ai
-./start-macos.sh
+APP_BIND=0.0.0.0 APP_PORT=7000 python -m uvicorn app:app --host 0.0.0.0 --port 7000
 ```
 
-It launches at `http://127.0.0.1:7860`. To expose it to your phone over a trusted LAN/VPN such as Tailscale, bind all interfaces:
-
-```bash
-PSD_AI_HOST=0.0.0.0 ./start-macos.sh
-# then open http://<tailscale-ip>:7860
-```
-
-The script also reads `.env` at startup, so `APP_BIND=0.0.0.0` and `APP_PORT`
-set there are picked up automatically without a command-line override each run.
+`run.sh` and the systemd unit both read `APP_BIND`/`APP_PORT` from `.env`, so
+setting them there is enough for those paths. On Fedora also open the port in
+the firewall: `sudo firewall-cmd --add-port=7000/tcp` (add `--permanent` to
+keep it across reboots).
 
 Keep `AUTH_ENABLED=true` (the default) before binding outside loopback. Do not
-expose this port directly to the public internet. To build a clickable app wrapper:
-
-```bash
-./build-macos-app.sh
-```
+expose this port directly to the public internet.
 
 <details>
 <summary>Cookbook, GPU, Ollama, and troubleshooting notes</summary>
@@ -311,8 +333,8 @@ This connects psd.ai in Docker to an Ollama server that is already running on
 your host machine; it does not start Ollama inside the container.
 `host.docker.internal` is Docker's hostname for the host machine from inside the
 container. Cookbook **Serve** is a separate workflow for serving downloaded
-models through psd.ai/llama.cpp, so Windows users with an existing Ollama
-install usually only need to add the endpoint in Settings.
+models through psd.ai/llama.cpp, so a host with an existing Ollama
+install usually only needs to add the endpoint in Settings.
 
 **Tool calls not firing on a manually-added Ollama `/v1` endpoint.** By
 design, a local Ollama `/v1` endpoint defaults to the conservative
@@ -348,62 +370,21 @@ docker compose logs --tail=120 psd_ai
 docker compose logs psd_ai | grep -E 'ChromaDB|MemoryVectorStore|DEGRADED'
 ```
 
-**macOS details.** `start-macos.sh` installs Homebrew deps, creates the venv,
-runs setup, and starts uvicorn on port `7860` because AirPlay often holds
-`7000`. It uses llama.cpp/Ollama for Metal. vLLM/SGLang are CUDA/ROCm-only and
-do not run on macOS. MLX-only models are not served by psd.ai.
+**Fedora details.** `run.sh` installs the dnf package groups (core build
+dependencies, the desktop toolchain, and the Jarvis voice/PC-control tools),
+then hands the rest to the native graphical installer (`installer/`), which
+creates `psd.ai/venv`, runs setup, builds the app, downloads/starts the
+model group and launches it — with a progress bar, per-model cards and
+Retry / Skip fault cards in its window. In the terminal fallback
+(headless / `--no-gui`) progress is mirrored to a browser dashboard on
+`127.0.0.1:7123` (`scripts/install_gui.py`, stdlib only) that stays up
+briefly after a failure so the error panel can be read.
+PC control follows the session: Wayland goes through ydotool/wtype/grim and
+the XDG Desktop Portal, X11 through xdotool/wmctrl/scrot — and
+**Settings → Voice & PC** shows exactly which tools this session has, with the
+dnf line for whatever is missing.
 
 </details>
-
-### Native Windows
-
-**One-command launcher** (creates the venv, installs deps, runs setup, starts the
-server; safe to re-run):
-
-```powershell
-git clone https://github.com/pavit12301611/psd-bot.git
-cd psd_ai
-powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
-```
-
-Or do it by hand:
-
-```powershell
-git clone https://github.com/pavit12301611/psd-bot.git
-cd psd_ai
-py -3.11 -m venv venv
-venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python setup.py
-python -m uvicorn app:app --host 127.0.0.1 --port 7000
-```
-
-If `python` points at an older interpreter, use `py -3.12` (or another installed
-3.11+ version) for the venv step.
-
-**Exposing on a LAN/Tailscale (Windows):** the launcher binds to `127.0.0.1` and
-does **not** read `APP_BIND` / `PSD_AI_HOST` from `.env`, so editing `.env`
-alone leaves the native Windows server on loopback. Pass the launcher's
-`-BindHost` flag instead:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1 -BindHost 0.0.0.0
-```
-
-The manual `uvicorn` command takes the same address as `--host 0.0.0.0`. Bind
-outside loopback only for a trusted LAN/VPN such as Tailscale: keep
-`AUTH_ENABLED=true` and do not expose the port directly to the public internet.
-
-**Requirements:** Python 3.11+. The core app (chat, agent, memory, documents,
-email, calendar, deep research) runs fully native. For full **Cookbook** background
-model downloads and the agent shell tool, also install
-[Git for Windows](https://git-scm.com/download/win) (provides `bash.exe`).
-Local GPU *serving* of vLLM/SGLang needs Linux/WSL2; for a local model on Windows,
-[Ollama](https://ollama.com/download) is the easiest path — point psd.ai at
-`http://localhost:11434/v1` in Settings.
-
-Open `http://localhost:7000`, log in with the generated admin password,
-and configure everything else inside **Settings**.
 
 ## Troubleshooting & Advanced Setup
 
@@ -433,8 +414,8 @@ To expose psd.ai on a local network or Tailscale with HTTPS:
 ### Common self-host traps (30-second fixes)
 A grab-bag of small gotchas that otherwise turn into long debugging sessions.
 
-- **`AUTH_ENABLED=false` is ignored / you're still forced to log in (Windows).** If you edited `.env` in Notepad it may have saved a UTF-8 **BOM**, turning the first key into `﻿AUTH_ENABLED` so it is never matched. psd.ai loads `.env` with `encoding="utf-8-sig"` to tolerate a leading BOM, but the safe fix is to re-save `.env` as **UTF-8 without BOM** (VS Code: *Save with Encoding → UTF-8*).
-- **macOS: the app isn't at `http://localhost:7000`.** macOS AirPlay Receiver usually holds port `7000`, so the macOS start script serves on **`7860`** instead — open `http://localhost:7860`. To use `7000`, free it (System Settings → General → AirDrop & Handoff → turn off *AirPlay Receiver*) and set `APP_PORT=7000`.
+- **`AUTH_ENABLED=false` is ignored / you're still forced to log in.** If `.env` was saved by an editor that writes a UTF-8 **BOM**, turning the first key into `﻿AUTH_ENABLED` so it is never matched. psd.ai loads `.env` with `encoding="utf-8-sig"` to tolerate a leading BOM, but the safe fix is to re-save `.env` as **UTF-8 without BOM** (VS Code: *Save with Encoding → UTF-8*).
+- **The app isn't at `http://localhost:7000`.** Something else holds the port — a leftover uvicorn, another service, or a container publish. `ss -tlnp | grep :7000` shows who; free it, or set `APP_PORT=7001` in `.env` (under Docker also pass `-e APP_PORT=7001 -p 7001:7001`, which the image honours).
 - **Copy buttons do nothing over a plain-HTTP Tailscale/LAN URL.** Browsers only expose the clipboard API (`navigator.clipboard`) on **secure origins** — HTTPS, or `localhost`. Over `http://100.x.y.z:7860` it is blocked. Serve over HTTPS (see *HTTPS + LAN/Tailscale exposure* above); `localhost` is exempt, so copy still works on the host itself.
 - **Self-hosted ntfy reminders don't reach your phone.** Two things: (1) the bundled ntfy binds to loopback by default — to reach it from your phone set `NTFY_BIND` to your host/Tailscale IP and `NTFY_BASE_URL` to the same server URL in `.env`, then recreate the ntfy container (see the `NTFY_*` block in `.env.example`); (2) in the ntfy **Android** app, subscribe to the topic with **Instant delivery** enabled — non-`ntfy.sh` servers don't get instant push otherwise.
 - **Local mail (Dovecot) login fails: "Plaintext authentication disallowed on non-encrypted connections."** Your IMAP/SMTP server is refusing cleartext auth over an unencrypted link. Prefer enabling TLS on the mail server; on a trusted LAN only, you can allow cleartext (Dovecot: `disable_plaintext_auth = no`).
@@ -536,12 +517,11 @@ h2c mode here, so browser-facing HTTP/2 requires a certificate. The
 `--ssl-certfile` route in *HTTPS + LAN/Tailscale exposure* above gives you
 HTTPS but not HTTP/2 — uvicorn does not speak it.
 
-**1. Install Caddy.** See the [install docs](https://caddyserver.com/docs/install)
-for your platform; on macOS, `brew install caddy`.
+**1. Install Caddy.** On Fedora: `sudo dnf install caddy`. (Other platforms:
+see the [install docs](https://caddyserver.com/docs/install).)
 
 **2. Write a `Caddyfile`.** Pick the block that matches how you reach the
-machine. Replace `7000` if psd.ai listens elsewhere — the macOS start script
-uses `7860`.
+machine. Replace `7000` if psd.ai listens elsewhere (`APP_PORT`).
 
 Public domain, Caddy obtains and renews the certificate itself:
 
@@ -596,8 +576,7 @@ caddy run --config ./Caddyfile
 Once that works, run it as a service:
 
 ```bash
-brew services start caddy          # macOS — reads $(brew --prefix)/etc/Caddyfile, not ./Caddyfile
-sudo systemctl enable --now caddy  # Linux, if your package installed the unit
+sudo systemctl enable --now caddy  # Fedora: the dnf package ships the unit
 ```
 
 psd.ai's own service is unchanged; the proxy runs alongside it. Under Docker,

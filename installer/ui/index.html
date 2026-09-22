@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>psd.ai Installer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">P</div>
+    <div class="head-text">
+      <h1>psd.ai Installer</h1>
+      <small id="subtitle">setting up your machine - this window shows every step, progress and fault</small>
+    </div>
+    <div id="phase-pill" class="pill">starting</div>
+  </header>
+
+  <div id="banner" class="banner installing">
+    <span class="dot"></span>
+    <div class="banner-body">
+      <div id="headline">Preparing psd.ai...</div>
+      <div class="bar-outer"><div class="bar-inner" id="setup-bar"></div></div>
+      <div id="activity" class="activity"></div>
+    </div>
+    <div id="setup-pct" class="big-pct"></div>
+  </div>
+
+  <div class="grid">
+    <div class="col-left">
+      <section class="card">
+        <h2>Install steps</h2>
+        <div id="steps"></div>
+      </section>
+
+      <section class="card hidden" id="models-card">
+        <h2>Local model group <span id="models-chip" class="chip"></span></h2>
+        <div class="dl-head">
+          <span class="dl-pct" id="dl-pct"></span>
+          <span class="dl-detail" id="dl-detail"></span>
+        </div>
+        <div class="bar-outer"><div class="bar-inner" id="dl-bar"></div></div>
+        <div class="dl-file" id="dl-file"></div>
+        <div class="models" id="models"></div>
+        <div class="models-actions" id="models-actions"></div>
+      </section>
+    </div>
+
+    <div class="col-right">
+      <section class="card hidden" id="faults-card">
+        <h2>Faults</h2>
+        <div id="faults"></div>
+      </section>
+
+      <section class="card">
+        <div class="tabs">
+          <h2>Live output</h2>
+          <span class="spacer"></span>
+          <label><input type="checkbox" id="autoscroll" checked> auto-scroll</label>
+        </div>
+        <div id="console"></div>
+      </section>
+    </div>
+  </div>
+
+  <footer id="actions"></footer>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

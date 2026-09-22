@@ -1,0 +1,24 @@
+[package]
+name = "psd-ai-installer"
+version = "1.0.0"
+description = "psd.ai graphical installer - native setup window with progress and fault reporting"
+authors = ["psd.ai"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Deliberately minimal: the installer only spawns local commands and renders
+# their progress. No HTTP client, no async runtime, no plugins - fewer crates
+# means a faster first build and a smaller surface to break.
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

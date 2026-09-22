@@ -6,7 +6,7 @@ import sys
 import time
 import collections
 from typing import Optional, Callable, Awaitable, Tuple, Dict
-from core.platform_compat import IS_WINDOWS, find_bash
+from core.platform_compat import find_bash
 from src.constants import MAX_OUTPUT_CHARS
 
 DEFAULT_BASH_TIMEOUT = 60 * 60     # 1 hour
@@ -18,24 +18,22 @@ TMUX_CAPTURE_LINES = 2000
 
 
 async def _create_bash_subprocess(command: str, **kwargs):
-    """Start the agent shell with Bash semantics on every supported OS.
+    """Start the agent shell with real Bash semantics.
 
-    ``asyncio.create_subprocess_shell`` delegates to ``cmd.exe`` on native
-    Windows.  That contradicts the Bash tool contract and makes POSIX commands
-    such as ``pwd``, ``ls -la``, and ``cat`` unreliable even when the launcher
-    has found Git Bash.  Pass the selected workspace as a structural ``cwd``
-    argument; Git Bash inherits that native Windows directory and exposes it
-    using its normal ``/c/...`` representation.
+    ``asyncio.create_subprocess_shell`` runs the command through ``/bin/sh``,
+    which on Fedora is bash in POSIX mode but on some spins is dash — and the
+    Bash tool is documented to accept arrays, ``[[ ]]`` and process
+    substitution. Resolving bash explicitly keeps the contract true everywhere
+    and gives one clear error if it is somehow missing (``sudo dnf install
+    bash``).
     """
-    if IS_WINDOWS:
-        bash = find_bash()
-        if not bash:
-            raise RuntimeError(
-                "Git Bash is required for the Bash tool on Windows; "
-                "install Git for Windows and restart psd.ai"
-            )
-        return await asyncio.create_subprocess_exec(bash, "-c", command, **kwargs)
-    return await asyncio.create_subprocess_shell(command, **kwargs)
+    bash = find_bash()
+    if not bash:
+        raise RuntimeError(
+            "bash is required for the Bash tool; install it with "
+            "`sudo dnf install bash` and restart psd.ai"
+        )
+    return await asyncio.create_subprocess_exec(bash, "-c", command, **kwargs)
 
 
 def _tmux_session_name(session_id: Optional[str]) -> str:

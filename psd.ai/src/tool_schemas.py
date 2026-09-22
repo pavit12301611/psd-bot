@@ -79,7 +79,7 @@ FUNCTION_TOOL_SCHEMAS = [
                     },
                     "params": {
                         "type": "object",
-                        "description": "Action arguments. open: {\"target\": \"notepad\"} | type: {\"text\": \"...\"} | key: {\"combo\": \"ctrl+s\"} | click: {\"x\": 100, \"y\": 200} | focus / close_window: {\"title\": \"Untitled\"} | volume: {\"level\": 40} or {\"direction\": \"up\"} | wait: {\"seconds\": 2}"
+                        "description": "Action arguments. open: {\"target\": \"firefox\"} | type: {\"text\": \"...\"} | key: {\"combo\": \"ctrl+s\"} | click: {\"x\": 100, \"y\": 200} | focus / close_window: {\"title\": \"Untitled\"} | volume: {\"level\": 40} or {\"direction\": \"up\"} | wait: {\"seconds\": 2}"
                     }
                 },
                 "required": ["action"]

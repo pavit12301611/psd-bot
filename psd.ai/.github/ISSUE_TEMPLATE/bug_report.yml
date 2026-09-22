@@ -45,9 +45,10 @@ body:
       options:
         - "-- Please Select --"
         - Docker (docker compose up)
+        - Fedora native (./run.sh)
+        - Fedora systemd user unit (install-service.sh)
         - Manual Python install (pip / venv)
-        - Windows native (launch-windows.ps1)
-        - macOS app (build-macos-app.sh / start-macos.sh)
+        - RPM (packaging/psd-ai.spec)
         - Other (describe in the reproduction steps below)
     validations:
       required: true
@@ -58,9 +59,9 @@ body:
       label: Operating System
       options:
         - "-- Please Select --"
-        - Linux
-        - macOS
-        - Windows
+        - Fedora (Wayland)
+        - Fedora (X11)
+        - Other Linux (name it below)
         - Other
     validations:
       required: true

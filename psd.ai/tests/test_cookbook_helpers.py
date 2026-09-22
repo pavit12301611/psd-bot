@@ -16,7 +16,6 @@ from routes.cookbook_helpers import (
     _llama_cpp_rebuild_cmd,
     _append_vllm_linux_preflight_lines,
     _local_tooling_path_export,
-    _local_windows_bash_env_prefix,
     _pip_install_attempt,
     _pip_install_fallback_chain,
     _ollama_bind_from_cmd,
@@ -109,50 +108,6 @@ def test_safe_env_prefix_accepts_powershell_activation_path():
 
 
 @pytest.mark.parametrize(
-    ("prefix", "expected"),
-    [
-        ("& 'C:\\Users\\me\\venv\\Scripts\\Activate.ps1'", "source /c/Users/me/venv/Scripts/activate"),
-        (r"& C:\Users\me\venv\Scripts\Activate.ps1", "source /c/Users/me/venv/Scripts/activate"),
-        (
-            r"& C:\Users\me\My Envs\venv\Scripts\Activate.ps1",
-            "source '/c/Users/me/My Envs/venv/Scripts/activate'",
-        ),
-        (
-            "& 'C:\\Users\\me\\My Envs\\venv\\Scripts\\Activate.ps1'",
-            "source '/c/Users/me/My Envs/venv/Scripts/activate'",
-        ),
-        (r"& D:/Envs/venv/Scripts/Activate.ps1", "source /d/Envs/venv/Scripts/activate"),
-    ],
-)
-def test_local_windows_bash_env_prefix_converts_powershell_venv_activation(prefix, expected):
-    converted = _local_windows_bash_env_prefix(prefix)
-
-    assert converted == expected
-    assert _safe_env_prefix(converted).startswith('[ -f "')
-
-
-@pytest.mark.parametrize(
-    "prefix",
-    [
-        None,
-        "",
-        "source /home/me/venv/bin/activate",
-        "conda activate qwen35",
-        'eval "$(conda shell.bash hook)" && conda activate qwen35',
-        r"& \\server\share\venv\Scripts\Activate.ps1",
-    ],
-)
-def test_local_windows_bash_env_prefix_leaves_other_prefixes_unchanged(prefix):
-    assert _local_windows_bash_env_prefix(prefix) == prefix
-
-
-def test_local_windows_bash_env_prefix_handles_long_whitespace_input():
-    prefix = "\t" * 100_000
-
-    assert _local_windows_bash_env_prefix(prefix) == prefix
-
-
-@pytest.mark.parametrize(
     "relative_path",
     ["static/js/cookbookRunning.js", "static/js/cookbookDownload.js"],
 )
@@ -163,13 +118,15 @@ def test_primary_windows_venv_emitters_quote_activation_path(relative_path):
     assert "_psQuote = shared._psQuote;" in source
 
 
-def test_windows_venv_conversion_stays_scoped_to_local_git_bash_runners():
+def test_local_runner_has_no_windows_host_branches():
+    """The host is Linux: PowerShell/venv conversion is a *remote* concern only."""
     source = (Path(__file__).resolve().parents[1] / "routes/cookbook_routes.py").read_text(encoding="utf-8")
-    guarded_conversion = (
-        "_local_windows_bash_env_prefix(req.env_prefix) if local_windows else req.env_prefix"
-    )
 
-    assert source.count(guarded_conversion) == 2
+    assert "IS_WINDOWS" not in source
+    assert "_local_windows_bash_env_prefix" not in source
+    assert "_launch_local_detached" not in source
+    # ...while the remote-Windows runner is still there.
+    assert "powershell" in source.lower()
 
 
 def test_validate_local_dir_accepts_external_drive_paths_with_spaces():
@@ -519,10 +476,16 @@ def test_pip_install_attempt_surfaces_stderr_on_failure():
     assert "nonexistent" in combined.lower() or result.returncode != 0
 
 
-def test_local_tooling_path_export_converts_windows_paths_for_bash():
-    line = _local_tooling_path_export(r"C:\Users\Jane Dev\.venv\Scripts\python.exe")
-    assert line == 'export PATH="/c/Users/Jane Dev/.venv/Scripts:$PATH"'
-    assert "C:" not in line
+def test_local_tooling_path_export_prepends_the_venv_bin_dir():
+    line = _local_tooling_path_export("/home/jane/psd.ai/venv/bin/python")
+    assert line == 'export PATH="/home/jane/psd.ai/venv/bin:$PATH"'
+
+
+def test_local_tooling_path_export_escapes_spaces_in_the_bin_dir():
+    line = _local_tooling_path_export("/home/Jane Dev/psd.ai/venv/bin/python3")
+    assert line == 'export PATH="/home/Jane Dev/psd.ai/venv/bin:$PATH"'
+    # $PATH must stay expandable, so the context is double-quoted.
+    assert line.endswith(':$PATH"')
 
 
 def test_user_shell_path_bootstrap_falls_back_to_python_on_windows_bash():
@@ -784,16 +747,13 @@ def test_llama_cpp_rebuild_cmd_clears_cached_build_paths():
     assert 'curl' not in cmd and 'wget' not in cmd
 
 
-def test_local_windows_download_pid_tracks_inner_bash_and_stop_kills_tree():
-    routes_src = (Path(__file__).resolve().parents[1] / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
-    running_src = (Path(__file__).resolve().parents[1] / "static" / "js" / "cookbookRunning.js").read_text(encoding="utf-8")
+def test_remote_windows_stop_kills_the_whole_process_tree():
+    """A REMOTE Windows host has no process groups, so the PowerShell runner
+    walks ParentProcessId to stop a serve task and its children."""
+    running_src = (
+        Path(__file__).resolve().parents[1] / "static" / "js" / "cookbookRunning.js"
+    ).read_text(encoding="utf-8")
 
-    # The Windows-local runner publishes Python's valid Win32 fallback before
-    # allowing Git Bash to replace it with /proc/$$/winpid.
-    assert "_windows_local_pid_record_line(pid_path, pid_ready_path)" in routes_src
-    assert "/proc/$$/winpid" in routes_src
-    assert "pid_ready_path.touch()" in routes_src
-    assert '\\"$$\\" > {pp}' not in routes_src
     assert "function Stop-Tree([int]$Id)" in running_src
     assert "('ParentProcessId = ' + $Id)" in running_src
     assert "Stop-Tree ([int]$p)" in running_src
@@ -802,11 +762,11 @@ def test_local_windows_download_pid_tracks_inner_bash_and_stop_kills_tree():
 def test_llama_cpp_rebuild_cmd_runs_clean_on_a_fresh_home(tmp_path):
     """The command should succeed even when neither path exists yet."""
     import os
-    from core.platform_compat import find_bash, git_bash_path
+    from core.platform_compat import find_bash, posix_path
 
     bash = find_bash() or "bash"
     env = dict(os.environ)
-    env["HOME"] = git_bash_path(tmp_path)
+    env["HOME"] = posix_path(tmp_path)
     result = subprocess.run(
         [bash, "-c", _llama_cpp_rebuild_cmd()],
         capture_output=True, text=True, env=env, timeout=10,
@@ -872,7 +832,6 @@ def test_cached_model_scan_uses_ollama_api_before_cli_and_windows_opt_in():
     assert "PSD_AI_ALLOW_OLLAMA_CLI_SCAN" in script
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows Ollama CLI startup guard")
 def test_cached_model_scan_does_not_launch_ollama_cli_on_windows(tmp_path):
     """Official Ollama for Windows can auto-start the tray/server on `ollama list`.
     The read-only cache scanner must not invoke that CLI unless explicitly opted in.

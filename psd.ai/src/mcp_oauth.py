@@ -20,8 +20,10 @@ def _resolve_redirect_base() -> str:
     """Origin the browser is sent back to after authorizing.
 
     Falls back to the port the app binds natively (APP_PORT, read the same way
-    by app.py and launcher.py) rather than a fixed 7000: the macOS launcher
-    defaults to 7860, and a callback on the wrong port reaches nothing. The
+    by app.py, run.sh, the systemd user unit and the Dockerfile) rather than
+    a fixed 7000: a deployment that moves the port has to move the
+    callback with it, because a redirect aimed at the wrong port reaches
+    nothing. The
     hostname stays `localhost` rather than internal_api_base()'s 127.0.0.1 —
     this URI is registered with the authorization server (via DCR, or by hand
     for Google clients), so changing the host invalidates registrations that

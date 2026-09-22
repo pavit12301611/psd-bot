@@ -1,0 +1,18 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=psd.ai
+GenericName=Local AI Assistant
+Comment=Chat with local models, use voice mode and let Jarvis drive your desktop
+# Installed by the RPM into /usr/lib/psd.ai; the launcher starts the engine and
+# the model group before opening the window.
+Exec=psd-ai %u
+Icon=psd-ai
+Terminal=false
+Categories=Utility;Office;Development;
+Keywords=ai;llm;assistant;local;jarvis;voice;chat;offline;
+StartupNotify=true
+StartupWMClass=psd-ai-desktop
+# The first run downloads llama.cpp plus a hardware-fit group of models, so it
+# can take a while and wants a real console for the progress log.
+X-GNOME-UsesNotifications=true

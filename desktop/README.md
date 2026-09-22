@@ -31,25 +31,44 @@ product.
 
 ## Run it
 
-**Windows users:** double-click `run.bat` in the repo root. It sets up Python,
-the local model group, and launches the app (building it the first time if
-Node.js + Rust are installed, or using a prebuilt `desktop\psd.ai.exe`).
+**On Fedora:** `./run.sh` from the repo root. It installs the build
+prerequisites with `dnf`, creates `psd.ai/venv`, downloads and starts the local
+model group, then launches this app (building it the first time).
+
+```bash
+./run.sh                 # everything: deps, models, server, app window
+./run.sh --doctor        # report what is missing, with the dnf lines to fix it
+./run.sh --no-desktop    # headless server only, no app window
+```
 
 **Developers:**
 
 ```bash
-# prerequisites: Node.js 18+, Rust (https://rustup.rs), Tauri OS deps
-#   https://tauri.app/start/prerequisites/
+# prerequisites, Fedora:
+sudo dnf install nodejs npm rust cargo patchelf \
+                 webkit2gtk4.1-devel gtk3-devel glib2-devel libsoup3-devel \
+                 javascriptcoregtk4.1-devel alsa-lib-devel librsvg2-devel
 cd desktop
 npm install
 npm run tauri dev        # hot-reloading app window
-npm run tauri build      # installers in src-tauri/target/release/bundle/
+npm run tauri build      # bundle/rpm/*.rpm + bundle/appimage/*.AppImage
 ```
 
-The Rust side finds the Python project via `PSD_AI_APP_DIR` (set by
-`run.bat`), or by walking up from the executable / cwd looking for
-`psd.ai/desktop_server.py`. It prefers `psd.ai/venv` if present, otherwise
-`PSD_AI_PYTHON`, otherwise `py -3` / `python3`.
+Or install the packaged build: `packaging/psd-ai.spec` produces an RPM that
+puts the venv in `/usr/lib/psd.ai` and the window in your application menu
+(`packaging/psd-ai.desktop`).
+
+The Rust side finds the Python project via `PSD_AI_APP_DIR` (set by `run.sh`),
+or by walking up from the executable / cwd looking for
+`psd.ai/desktop_server.py`. For the interpreter it prefers, in order:
+`PSD_AI_PYTHON`, `psd.ai/venv/bin/python`, `.venv/bin/python`, the packaged
+`/usr/lib/psd.ai/venv/bin/python`, then `/usr/bin/python3`. Each candidate has
+to be an executable file, so a venv left half-built by an interrupted run is
+skipped rather than trusted.
+
+The sidecar is spawned in its own process group and the whole group is
+terminated when the last window closes, so a `llama-server` it started cannot
+outlive the app and hold on to the GPU.
 
 ## UI-only development (no Rust toolchain)
 

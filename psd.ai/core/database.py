@@ -12,7 +12,7 @@ from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy.orm import relationship, sessionmaker, backref
 
 from src.runtime_paths import get_app_root
-from core.platform_compat import safe_chmod, IS_WINDOWS
+from core.platform_compat import safe_chmod
 
 logger = logging.getLogger(__name__)
 
@@ -2075,10 +2075,9 @@ def init_db():
     db_path = _sqlite_db_path(engine.url)
     if db_path is not None:
         # Fail closed-loud on the main file: this is the only access control on
-        # it, so if the chmod genuinely fails (read-only FS, foreign owner) an
-        # operator should hear about it. safe_chmod also returns False as a
-        # Windows no-op, so guard on IS_WINDOWS to avoid a spurious warning there.
-        if not safe_chmod(db_path, 0o600) and not IS_WINDOWS:
+        # it, so if the chmod genuinely fails (read-only FS, foreign owner, a
+        # FUSE mount without permission bits) an operator should hear about it.
+        if not safe_chmod(db_path, 0o600):
             logger.warning(
                 "Could not restrict %s to 0o600; it holds secrets and may be "
                 "world-readable. Check filesystem permissions and ownership.",
@@ -2091,11 +2090,7 @@ def init_db():
         # normal case, not an error — only a failed chmod warrants a warning.
         for suffix in _SQLITE_SIDECARS:
             sidecar = db_path + suffix
-            if (
-                os.path.exists(sidecar)
-                and not safe_chmod(sidecar, 0o600)
-                and not IS_WINDOWS
-            ):
+            if os.path.exists(sidecar) and not safe_chmod(sidecar, 0o600):
                 logger.warning(
                     "Could not restrict %s to 0o600; it may expose DB pages.",
                     sidecar,

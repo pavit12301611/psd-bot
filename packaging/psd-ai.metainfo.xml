@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>psd-ai</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>psd.ai</name>
+  <summary>Local-first AI assistant with an offline model group, voice and desktop control</summary>
+
+  <description>
+    <p>
+      psd.ai runs entirely on your own machine. On first launch it measures
+      your RAM, VRAM and CPU, picks a group of three to five hardware-fit GGUF
+      models, downloads the llama.cpp server for your GPU backend (CUDA,
+      Vulkan, SYCL or CPU) and serves one model per port — so the chat model,
+      a coding model and a fast utility model are all resident at once.
+    </p>
+    <p>
+      Mixture-of-experts models are placed deliberately: attention and shared
+      weights stay on the GPU while experts spill into RAM, which lets a
+      mid-range card host a far larger model than a VRAM-only planner would
+      allow. Vision models load their projector so the assistant can read
+      screenshots and documents.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Offline chat with a locally served model group — no API key required</li>
+      <li>Voice mode ("Talk to psd.ai") with on-device Whisper transcription</li>
+      <li>Jarvis: screen reading, window control, typing and clipboard, Wayland-first with an X11 fallback</li>
+      <li>Research, email, calendar and file tools the agent can call</li>
+      <li>Power profiles: balanced, power, or max (one huge model instead of a group)</li>
+    </ul>
+    <p>
+      Built for Fedora: dependencies come from dnf, the engine can run as a
+      systemd user unit, and SELinux stays Enforcing.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">psd-ai.desktop</launchable>
+  <icon type="remote" width="512" height="512">https://raw.githubusercontent.com/pavit12301611/psd-bot/main/psd.ai/assets/branding/psd_ai.jpg</icon>
+
+  <categories>
+    <category>Utility</category>
+    <category>Office</category>
+    <category>Development</category>
+  </categories>
+
+  <requires>
+    <display_length compare="ge">720</display_length>
+    <memory compare="ge">8388608</memory>
+  </requires>
+  <recommends>
+    <memory compare="ge">16777216</memory>
+    <control>keyboard</control>
+    <control>pointing</control>
+    <control>voice</control>
+  </recommends>
+
+  <provides>
+    <binary>psd-ai</binary>
+    <binary>psd-ai-service</binary>
+  </provides>
+
+  <supports>
+    <control>touch</control>
+  </supports>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="1.0.0" date="2026-09-20">
+      <description>
+        <p>First Fedora-native release.</p>
+        <ul>
+          <li>2026 local model catalogue with MoE-aware GPU/RAM placement</li>
+          <li>Linux llama.cpp assets (.tar.gz) with per-backend selection and cudart companions</li>
+          <li>Wayland PC control through ydotool/wtype/grim and the XDG Desktop Portal</li>
+          <li>dnf-based setup, systemd user unit, RPM packaging</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+
+  <url type="homepage">https://github.com/pavit12301611/psd-bot</url>
+  <url type="bugtracker">https://github.com/pavit12301611/psd-bot/issues</url>
+  <url type="vcs-browser">https://github.com/pavit12301611/psd-bot</url>
+</component>

@@ -46,7 +46,7 @@ Access policy is split by surface:
 Runtime behavior:
 
 - POSIX and most remote flows run detached through tmux;
-- local Windows uses detached process/log/pid behavior under `%TEMP%\\psd_ai-tmux`; Python first publishes a valid Win32 fallback PID, then Git Bash may replace it with `/proc/$$/winpid` after a ready-file handoff, so PowerShell `Stop-Tree` can terminate the actual serving shell and children instead of receiving an MSYS PID. Frontend PowerShell venv activation is quoted safely and the local Git Bash runner converts a valid `Scripts\\Activate.ps1` prefix into `source <git-bash-path>/Scripts/activate` so the selected environment actually supplies the serve binary;
+- local runs always use tmux + bash with the session name, log path and PID recorded under the runtime dir, so status/stop/kill find the same session again; there is no PID translation step on the local path;
 - remote Windows uses PowerShell runner scripts;
 - missing `tmux`, `docker`, or serve-engine binaries return shaped errors where possible;
 - local Docker inside the psd.ai container is available only when the Docker CLI exists, `PSD_AI_ENABLE_HOST_DOCKER=true`, and `/var/run/docker.sock` is actually mounted as a socket; otherwise Cookbook should show the host-Docker access hint and prefer remote SSH Docker workflows;
@@ -56,7 +56,7 @@ Runtime behavior:
 - vLLM recipe routes fetch and cache model recipe manifests/YAML from `vllm-project/recipes`, normalize base args/env/dependencies/tool-calling/reasoning variants, and expose compatible strategy metadata for serve setup;
 - Hugging Face download/setup paths can detect and persist encrypted HF tokens for later Cookbook/agent use;
 - local and remote model paths can contain spaces or non-ASCII characters when helper validation/quoting accepts them;
-- task status handles tmux, remote Windows logs, local Windows PID/log files, HF cache completion checks, stale browser-state download guards, pip dependency-install success sentinels, exit-code wrappers, serve diagnosis snapshots, and scheduled serve lifecycle hooks;
+- task status handles tmux sessions, remote Windows logs over SSH, local tmux state files,
 - scheduled serve lifecycle stop attempts only persist `status=stopped`, clear `_scheduledStopAtMs`, and delete auto-registered endpoints for sessions whose tmux/remote stop command succeeded or were already gone; failed stop attempts are logged without marking unrelated expired serves as stopped.
 
 `routes.cookbook_helpers` owns validation and command construction:
@@ -73,7 +73,7 @@ Cookbook routes request shell/SSH behavior; they do not relax shell security.
 
 ## Shell Dependencies
 
-`routes.shell_routes.py` owns Cookbook-adjacent package readiness/install, shell execution/streaming, and llama.cpp rebuild endpoints. The Cookbook UI calls these routes for dependency diagnosis, install/update actions, engine rebuilds, and tmux/reconnect/stop/kill flows. Windows uses detached log/PID wrappers where POSIX tmux is unavailable.
+`routes.shell_routes.py` owns Cookbook-adjacent package readiness/install,
 
 These are admin-only code-execution surfaces and should be reviewed with Cookbook changes even though they are implemented outside `routes.cookbook_routes.py`.
 
@@ -141,8 +141,8 @@ Runtime behavior:
 - llama.cpp CPU-only and GPU fallback scripts should preserve usable CPU paths.
 - SSH probe failures, GPU driver errors, and no-GPU states should be distinguishable.
 - Remote SSH host/port validation is shared through route validators for Cookbook/HWFit paths.
-- Windows launcher/runtime Git Bash discovery includes per-user installs under `%LocalAppData%\\Programs\\Git`, and WSL/Git Bash detection shapes PATH handling for NVIDIA/remote flows.
-- macOS startup helpers start ChromaDB alongside the app path.
+- on Linux the launcher resolves bash through `core.platform_compat.find_bash()`, preferring a real bash over a restricted `sh` in minimal containers, and remote SSH probes prepend their own PATH so nvidia-smi and the serve engines are found;
+- the Docker path runs ChromaDB as its own service, while native Fedora runs use the lightweight `chromadb-client` against an optional standalone Chroma.
 - Ollama serve can auto-pick an available port, and scheduled task stop paths
   verify stop success before persisting a stopped state.
 
@@ -180,7 +180,7 @@ Shell-bound Cookbook inputs must pass helper validation before command construct
 
 ## Testing Coverage
 
-Existing coverage is strongest for helper validation/quoting, SSH host validation, pip fallback and dependency-completion regressions, cached scan scripts, serve profile computation, scheduled serve lifecycle state persistence, hardware detection/ranking across AMD/NVIDIA/macOS/manual/container modes, MLX/Metal ranking and request-model pinning, manual backend simulation, Docker GPU compose overlays, Cookbook CLI state, package detection, Windows venv/path/task helpers, non-numeric GPU counts, non-string model catalog fields, and selected frontend progress regressions.
+Existing coverage is strongest for helper validation/quoting, SSH host validation, pip fallback and dependency-completion regressions, cached scan scripts, serve profile computation, scheduled serve lifecycle state persistence, hardware detection/ranking across AMD/NVIDIA/macOS/manual/container modes, MLX/Metal ranking and request-model pinning, manual backend simulation, Docker GPU compose overlays, Cookbook CLI state, package detection, remote Windows target helpers, non-numeric GPU counts, non-string model catalog fields, and selected frontend progress regressions.
 
 Route-level auth/security and degraded-return coverage is thinner for Cookbook admin routes, shell dependency routes, `/api/cookbook/hf-latest`, state/status edge cases, HW Fit routes, frontend JS behavior, and helper scripts such as `hf_download.py`, `add_hwfit_models.py`, and `diffusion_server.py`.
 

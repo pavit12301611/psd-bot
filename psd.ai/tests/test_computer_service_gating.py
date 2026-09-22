@@ -41,15 +41,18 @@ async def test_unknown_action_never_reaches_a_handler(enabled):
 
 @pytest.mark.asyncio
 async def test_denied_target_is_refused_before_launching(enabled):
-    result = await enabled.act("open", {"target": "format c:"})
-    assert result["ok"] is False
-    assert "never-run list" in result["error"]
+    """A destructive Fedora target is caught by the policy, never by the OS."""
+    for target in ("mkfs /dev/sda", "sudo rm -rf /", "dd if=/dev/zero of=/dev/nvme0n1"):
+        result = await enabled.act("open", {"target": target})
+        assert result["ok"] is False, target
+        assert result["blocked"] is True, target
+        assert "never-run list" in result["error"], target
 
 
 @pytest.mark.asyncio
 async def test_risky_action_waits_for_confirmation(enabled, monkeypatch):
     monkeypatch.setattr(computer_module, "_confirm_risky", lambda: True)
-    result = await enabled.act("kill", {"name": "notepad.exe"})
+    result = await enabled.act("kill", {"name": "gnome-text-editor"})
     assert result["ok"] is False
     assert result["needs_confirmation"] is True
     assert result["confirm_hint"]
@@ -69,7 +72,7 @@ async def test_confirmed_risky_action_proceeds_to_the_handler(enabled, monkeypat
     monkeypatch.setattr(computer_module, "_confirm_risky", lambda: True)
     monkeypatch.setitem(computer_module._HANDLERS, "kill", fake_kill)
 
-    result = await enabled.act("kill", {"name": "notepad.exe", "confirm": True})
+    result = await enabled.act("kill", {"name": "gnome-text-editor", "confirm": True})
     assert result["ok"] is False
     assert "nope" in result["error"]
     # The synthetic `confirm` flag must not leak into the action params.
@@ -81,6 +84,17 @@ def test_status_reports_capabilities_without_touching_devices(enabled):
     assert status["enabled"] is True
     assert isinstance(status["supports_screenshot"], bool)
     assert isinstance(status["supports_input"], bool)
+    # Fedora session facts + a copy-pasteable remedy for whatever is missing.
+    assert status["platform"].startswith("linux")
+    # "" from platform_compat surfaces as "none": a headless engine still has
+    # to answer status() without a compositor.
+    assert status["session"] in ("wayland", "x11", "tty", "none")
+    assert isinstance(status["wayland"], bool)
+    assert isinstance(status["tools"], dict) and "ydotool" in status["tools"]
+    assert status["install_hint"] == "" or status["install_hint"].startswith(
+        "sudo dnf install "
+    )
+    assert isinstance(status["notes"], list)
     assert set(status["policy"]["all"]) == set(
         status["policy"]["read_only"]
         + status["policy"]["write"]

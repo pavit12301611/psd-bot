@@ -14,7 +14,7 @@ import tempfile
 from collections import namedtuple
 from pathlib import Path
 from typing import Dict, Any
-from core.platform_compat import IS_APPLE_SILICON, which_tool
+from core.platform_compat import which_tool
 from core.middleware import INTERNAL_TOOL_USER
 from src.host_docker_access import (
     HOST_DOCKER_ACCESS_HINT,
@@ -23,11 +23,10 @@ from src.host_docker_access import (
 )
 from src.optional_deps import prepare_optional_dependency_import
 
-# POSIX-only: `pty`/`fcntl` transitively import `termios`, which does NOT exist
-# on Windows, so importing them unconditionally crashed app startup there
-# (ModuleNotFoundError: termios — issues #140/#92/#63/#149/#150). The PTY code
-# path is only reachable on POSIX; Windows uses pipe streaming + a detached-job
-# fallback for the tmux feature (see _generate_win_detached).
+# `pty`/`fcntl` transitively import `termios`, which only exists on POSIX. The
+# import is still guarded: a slim container image can lack the module, and a
+# missing PTY must degrade to pipe streaming rather than stop the app at import
+# time (issues #140/#92/#63/#149/#150).
 try:
     import fcntl
     import pty
@@ -42,12 +41,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from core.platform_compat import (
-    IS_WINDOWS,
-    detached_popen_kwargs,
-    find_bash,
-    git_bash_path,
-)
+from core.platform_compat import detached_popen_kwargs, find_bash
 
 
 def _require_admin(request: Request):
@@ -552,22 +546,14 @@ def _normalize_legacy_remote_tmux_exec(command: str) -> str:
 async def _create_shell(command: str, **kwargs):
     """Spawn a shell subprocess for `command`.
 
-    POSIX: /bin/sh via create_subprocess_shell (unchanged behaviour).
-    Windows: prefer a real bash (Git Bash/WSL) so bash-syntax commands behave
-    the same as on Linux; fall back to cmd.exe when no bash is installed.
-    Powershell commands are executed directly via cmd.exe /c to avoid quoting
-    and env variable expansion errors under Git Bash.
+    bash is resolved explicitly instead of using create_subprocess_shell: that
+    call goes through /bin/sh, which is bash in POSIX mode on Fedora but dash on
+    some spins, and the frontend and the agent both emit bash syntax. Falling
+    back to /bin/sh keeps a minimal container working.
     """
-    if IS_WINDOWS:
-        # PowerShell commands (used by the frontend for Windows log-file polling
-        # and session management) must run directly — passing them through
-        # bash -c mangles $env:VAR syntax and breaks the command.
-        cmd_trim = command.strip()
-        if cmd_trim.startswith("powershell") or cmd_trim.startswith("cmd "):
-            return await asyncio.create_subprocess_shell(command, **kwargs)
-        bash = find_bash()
-        if bash:
-            return await asyncio.create_subprocess_exec(bash, "-c", command, **kwargs)
+    bash = find_bash()
+    if bash:
+        return await asyncio.create_subprocess_exec(bash, "-c", command, **kwargs)
     return await asyncio.create_subprocess_shell(command, **kwargs)
 
 
@@ -858,102 +844,6 @@ async def _generate_tmux(cmd: str, request: Request):
         pass
 
 
-async def _generate_win_detached(cmd: str, request: Request):
-    """Windows stand-in for the tmux path (issues #84/#162).
-
-    tmux doesn't exist on Windows, so we run the command in a *detached* child
-    (DETACHED_PROCESS — survives browser disconnect, same as the tmux session)
-    that writes output to a log file, and tail that log over SSE. Prefers bash
-    (Git Bash) for command-syntax parity; falls back to cmd.exe. There's no
-    `tmux attach` equivalent, but the "keeps running if you disconnect" contract
-    holds, which is the point of the feature for long Cookbook downloads."""
-    TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
-    session_id = f"cookbook-{uuid.uuid4().hex[:8]}"
-    log_path = TMUX_LOG_DIR / f"{session_id}.log"
-    exit_path = TMUX_LOG_DIR / f"{session_id}.exit"
-
-    bash = find_bash()
-    if bash:
-        script_path = TMUX_LOG_DIR / f"{session_id}.sh"
-        script_path.write_text(
-            f"{cmd} > {shlex.quote(git_bash_path(log_path))} 2>&1\n"
-            f"echo $? > {shlex.quote(git_bash_path(exit_path))}\n",
-            encoding="utf-8",
-        )
-        argv = [bash, str(script_path)]
-    else:
-        script_path = TMUX_LOG_DIR / f"{session_id}.cmd"
-        # cmd.exe wrapper: run, redirect all output to the log, record exit code.
-        script_path.write_text(
-            "@echo off\r\n"
-            f'call {cmd} > "{log_path}" 2>&1\r\n'
-            f'echo %ERRORLEVEL%> "{exit_path}"\r\n',
-            encoding="utf-8",
-        )
-        argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(script_path)]
-
-    try:
-        subprocess.Popen(
-            argv,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-            **detached_popen_kwargs(),
-        )
-    except Exception as e:
-        yield f"data: {json.dumps({'stream': 'stderr', 'data': f'Failed to launch background job: {e}'})}\n\n"
-        yield f"data: {json.dumps({'exit_code': -1})}\n\n"
-        return
-
-    yield f"data: {json.dumps({'stream': 'stdout', 'data': f'Started background job: {session_id}'})}\n\n"
-
-    lines_sent = 0
-    exit_code = None
-    while True:
-        if await request.is_disconnected():
-            yield f"data: {json.dumps({'stream': 'stdout', 'data': f'Disconnected. Background job {session_id} continues running.'})}\n\n"
-            return
-        try:
-            if log_path.exists():
-                lines = log_path.read_text(
-                    encoding="utf-8", errors="replace"
-                ).splitlines()
-                for line in lines[lines_sent:]:
-                    yield f"data: {json.dumps({'stream': 'stdout', 'data': line})}\n\n"
-                lines_sent = len(lines)
-        except Exception as e:
-            logger.debug("win detached log read error: %s", e)
-
-        if exit_path.exists():
-            # Drain any final lines, then read the recorded exit code.
-            await asyncio.sleep(0.3)
-            try:
-                if log_path.exists():
-                    lines = log_path.read_text(
-                        encoding="utf-8", errors="replace"
-                    ).splitlines()
-                    for line in lines[lines_sent:]:
-                        yield f"data: {json.dumps({'stream': 'stdout', 'data': line})}\n\n"
-                    lines_sent = len(lines)
-                exit_code = int(
-                    (
-                        exit_path.read_text(encoding="utf-8", errors="replace").strip()
-                        or "0"
-                    )
-                )
-            except Exception:
-                exit_code = 0
-            break
-        await asyncio.sleep(1.0)
-
-    yield f"data: {json.dumps({'exit_code': exit_code})}\n\n"
-    for p in (log_path, exit_path, script_path):
-        try:
-            p.unlink(missing_ok=True)
-        except Exception:
-            pass
-
-
 def setup_shell_routes() -> APIRouter:
     router = APIRouter(tags=["shell"])
 
@@ -1000,22 +890,18 @@ def setup_shell_routes() -> APIRouter:
         )
 
         if use_tmux:
-            # tmux is POSIX-only; Windows uses a detached-process + logfile tail
-            # that preserves the "survives disconnect" behaviour.
-            gen = (
-                _generate_win_detached(cmd, request)
-                if IS_WINDOWS
-                else _generate_tmux(cmd, request)
+            return StreamingResponse(
+                _generate_tmux(cmd, request), media_type="text/event-stream"
             )
-            return StreamingResponse(gen, media_type="text/event-stream")
 
-        if use_pty and not IS_WINDOWS:
+        if use_pty and pty is not None:
             return StreamingResponse(
                 _generate_pty(cmd, timeout, request),
                 media_type="text/event-stream",
             )
-        # Windows has no PTY; fall through to pipe streaming below (output still
-        # streams line-by-line, just without live in-place progress-bar redraws).
+        # No PTY module in this image; fall through to pipe streaming below
+        # (output still streams line-by-line, just without live in-place
+        # progress-bar redraws).
 
         async def generate():
             proc = None
@@ -1561,16 +1447,18 @@ def setup_shell_routes() -> APIRouter:
 
         for pkg in packages:
             if pkg.get("name") in {"mflux", "boogu_image_mlx", "mlx_vlm", "mlx_lama_swift", "mlx_ddcolor_swift"}:
-                is_apple_target = target_os_id == "macos" or (
-                    not host and IS_APPLE_SILICON
-                )
-                known_non_apple_target = bool(target_os_id and target_os_id != "macos") or (
-                    not host and not IS_APPLE_SILICON
+                # The host is Linux, so MLX/APFEL can only ever apply to a
+                # remote Mac the Cookbook is serving on.
+                is_apple_target = target_os_id == "macos"
+                known_non_apple_target = (
+                    bool(target_os_id and target_os_id != "macos") or not host
                 )
                 pkg["applicable"] = is_apple_target
                 if known_non_apple_target:
                     pkg["installed"] = None
-                    pkg["status_note"] = "Only relevant for Apple Silicon / MLX image serving."
+                    pkg["status_note"] = (
+                        "Only relevant for a remote Apple Silicon host / MLX image serving."
+                    )
                     continue
             on_remote = bool(host and pkg.get("target") == "remote")
             probe = None
@@ -1589,12 +1477,11 @@ def setup_shell_routes() -> APIRouter:
                         pkg["status_note"] = note
             elif pkg.get("kind") == "system":
                 if pkg["name"] == "APFEL":
-                    pkg["applicable"] = IS_APPLE_SILICON
-                    pkg["installed"] = which_tool("apfel") is not None
+                    pkg["applicable"] = False
+                    pkg["installed"] = None
                     pkg["status_note"] = (
-                        "Available on Apple Silicon (arm64) devices; exposed through a local OpenAI-compatible API."
-                        if IS_APPLE_SILICON
-                        else "Requires a native Apple Silicon Mac with Apple Foundational Models support."
+                        "Requires a native Apple Silicon Mac with Apple Foundational "
+                        "Models support - not applicable to this Linux host."
                     )
                 else:
                     pkg["installed"] = shutil.which(pkg["name"]) is not None
