@@ -43,11 +43,15 @@ only when you intentionally want LAN/reverse-proxy access.
 ### Native Fedora Linux
 
 On Fedora the one-command path is the repo-root launcher: it installs the
-system packages with `dnf`, builds the venv, runs setup, starts the local
-model group and opens the desktop app. While it works, it serves a graphical
-install dashboard at `http://127.0.0.1:7123` (opened automatically; steps,
-download progress, model cards and errors, loopback only — `--no-gui` skips
-it).
+system packages (including the Rust toolchain) with `dnf`, then builds and
+opens a **native graphical installer window** (`installer/`, Tauri — no
+browser): a real progress bar, the running step, live output, the model-group
+download with percentages, and faults listed properly with Retry / Skip
+buttons. Inside it the venv, dependencies, setup and the desktop app build
+run, the local model group downloads, and a Launch button opens the app.
+Headless session, no cargo, or `--no-gui`: the same steps run in the
+terminal with a browser dashboard at `http://127.0.0.1:7123` (loopback
+only) as fallback progress view.
 
 ```bash
 git clone https://github.com/pavit12301611/psd-bot.git
@@ -368,9 +372,12 @@ docker compose logs psd_ai | grep -E 'ChromaDB|MemoryVectorStore|DEGRADED'
 
 **Fedora details.** `run.sh` installs the dnf package groups (core build
 dependencies, the desktop toolchain, and the Jarvis voice/PC-control tools),
-creates `psd.ai/venv`, runs setup, and starts the model group plus the app.
-Progress is mirrored to a browser dashboard on `127.0.0.1:7123`
-(`scripts/install_gui.py`, stdlib only, `--no-gui` to skip) that stays up
+then hands the rest to the native graphical installer (`installer/`), which
+creates `psd.ai/venv`, runs setup, builds the app, downloads/starts the
+model group and launches it — with a progress bar, per-model cards and
+Retry / Skip fault cards in its window. In the terminal fallback
+(headless / `--no-gui`) progress is mirrored to a browser dashboard on
+`127.0.0.1:7123` (`scripts/install_gui.py`, stdlib only) that stays up
 briefly after a failure so the error panel can be read.
 PC control follows the session: Wayland goes through ydotool/wtype/grim and
 the XDG Desktop Portal, X11 through xdotool/wmctrl/scrot — and

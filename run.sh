@@ -6,25 +6,37 @@
 #    1. install the system packages this project builds and runs
 #       against (dnf - first run only, skipped if already present)
 #    2. find Python 3.11+
-#    3. create a virtual environment            (first run only)
-#    4. install all dependencies                (first run only)
-#    5. install the Jarvis extras               (first run only -
+#    3. install the Rust toolchain, then BUILD AND OPEN THE GRAPHICAL
+#       INSTALLER - a native window (like a real installer) that shows
+#       a progress bar, the running step, live output, the local-model
+#       download with its own progress, and lists every fault properly
+#       with Retry / Skip buttons (installer/)
+#
+#  Inside that installer window the remaining setup happens:
+#    4. create a virtual environment            (first run only)
+#    5. install all dependencies                (first run only)
+#    6. install the Jarvis extras               (first run only -
 #       voice + PC control, see requirements-jarvis.txt)
-#    6. run setup - creates data folders        (the app asks you to
+#    7. run setup - creates data folders        (the app asks you to
 #       create your admin account in its own window on first launch)
-#    7. download + run a hardware-fit group of 3-5 local models
-#       (first run only - a few GB per model, in the background,
-#       logging to logs/local-model.log)
-#    8. open the psd.ai DESKTOP APP             (no browser, no
-#       localhost URL)
+#    8. build the psd.ai desktop app            (first run only)
+#    9. download + run a hardware-fit group of 3-5 local models
+#       (a few GB per model, in the background, logging to
+#       logs/local-model.log) - with a Launch button at the end
 #
 #  The desktop app is a native window (Tauri + React). It starts the
 #  Python engine privately inside itself and talks to it over IPC.
 #  Nothing is served on a public port and nothing opens in a browser.
 #
+#  No display / no cargo / --no-gui: the same steps run right here in
+#  this terminal instead, with a small browser dashboard as progress
+#  view (http://127.0.0.1:7123/install).
+#
 #  Safe to re-run - steps already done are skipped, so later launches
-#  start straight away. Keep this next to the psd.ai folder. Closing
-#  the app window stops everything, including the model group.
+#  start straight away (an installed psd.ai skips the installer and
+#  opens the app directly). Keep this next to the psd.ai folder.
+#  Closing the installer or app window stops everything it started,
+#  including the model group.
 #
 #  ------------------------------------------------------------------
 #  Options (./run.sh --help)
@@ -39,7 +51,8 @@
 #                            no PC-control packages)
 #    ./run.sh --no-models    skip the local model group this run
 #    ./run.sh --no-app       set everything up, then stop (no window)
-#    ./run.sh --no-gui       no browser install dashboard (terminal only)
+#    ./run.sh --no-gui       no graphical installer window and no browser
+#                            dashboard (everything in this terminal)
 #    ./run.sh --no-system-deps  do not touch dnf, use what is installed
 #    ./run.sh --skip-numpy-check skip the numpy import check
 #
@@ -144,8 +157,11 @@ log() {
 }
 
 # ------------------------------------------------------------------
-# Graphical install dashboard
+# Graphical install dashboard (FALLBACK progress view)
 #
+#   The primary install UI is the native graphical installer window
+#   (section 2b, installer/). This browser dashboard is the fallback
+#   for the terminal flow (--no-gui, headless session, no cargo).
 #   run.sh appends one JSON-lines marker per step transition to
 #   logs/install-steps.jsonl; scripts/install_gui.py serves a browser
 #   dashboard from those markers plus the two log tails (steps, download
@@ -803,6 +819,111 @@ if [ -z "$GUI_URL" ]; then
     # No system python3 before the dnf step - start the dashboard now.
     start_install_gui "$PYCMD"
 fi
+
+# ==================================================================
+#  2b. Graphical installer (the normal path on Fedora)
+# ==================================================================
+# Real installers work like this: one native window shows a progress bar,
+# the running step, live output and - when something faults - a proper
+# card listing the fault with Retry / Skip buttons. That window is the
+# small Tauri app in installer/; run.sh stays the bootstrapper: it makes
+# sure Rust is installed (step 1 above), builds the installer once, then
+# hands the whole setup over to it and reports the installer's exit code.
+#
+# This path is skipped when:
+#   --no-gui          user wants the plain terminal flow (or a headless box)
+#   --no-app          nothing to launch, terminal flow is fine
+#   no display        server session -> terminal flow
+#   no cargo          rustup offline -> terminal flow (still fully works)
+#   nothing to do     venv + deps + app binary already present -> straight
+#                     to launch (an already installed psd.ai starts fast)
+# The browser dashboard (section 4) stays as the fallback progress view
+# for those terminal-flow cases.
+
+needs_graphical_install() {
+    # True when at least one installer step actually has work to do.
+    [ "$REPAIR" = "1" ] && return 0
+    [ ! -x "${APP_DIR}/venv/bin/python" ] && return 0
+    [ ! -f "${APP_DIR}/venv/.deps_ok" ] && return 0
+    [ -z "$(find_app_binary)" ] && return 0
+    return 1
+}
+
+run_graphical_installer() {
+    local cargo_bin="" src="${ROOT}installer/src-tauri"
+    local out="${src}/target/release/psd-ai-installer"
+
+    if [ "$NO_GUI" = "1" ] || [ "$NO_APP" = "1" ]; then return 1; fi
+    if [ -z "$DISPLAY" ] && [ -z "$WAYLAND_DISPLAY" ]; then return 1; fi
+    if ! needs_graphical_install; then return 1; fi
+
+    # --rebuild only means "build the desktop app fresh": drop the old
+    # binary so the installer's plan includes the build step again.
+    if [ "$REBUILD" = "1" ]; then
+        rm -f "${DESKTOP_DIR}/src-tauri/target/release/psd-ai-desktop" 2>/dev/null
+        if ! needs_graphical_install; then return 1; fi
+    fi
+    # --repair starts from a clean venv (mirrors section 3 below).
+    if [ "$REPAIR" = "1" ]; then
+        rm -rf "${APP_DIR}/venv"
+        echo "repair: removed ${APP_DIR}/venv"
+    fi
+
+    # locate cargo (rustup puts it in ~/.cargo/bin, dnf in /usr/bin)
+    if have_bin cargo; then
+        cargo_bin="cargo"
+    elif [ -x "${HOME}/.cargo/bin/cargo" ]; then
+        cargo_bin="${HOME}/.cargo/bin/cargo"
+    else
+        return 1   # no toolchain -> terminal flow below still works
+    fi
+
+    # build the installer once (a few minutes the first time, ~2s after)
+    if [ ! -x "$out" ]; then
+        echo "building the graphical installer (cargo, first time only)..."
+        gui_step installer running "Compiling the native installer window"
+        # shellcheck disable=SC2086
+        if ! ( cd "$src" && PATH="$PATH:${HOME}/.cargo/bin" \
+               $cargo_bin build --release ) >>"$LOG_DIR/setup.log" 2>&1; then
+            echo "graphical installer could not be built (see ${LOG_DIR}/setup.log)"
+            echo "falling back to the terminal installation flow..."
+            gui_step installer failed "cargo build failed - using terminal flow"
+            return 1
+        fi
+        gui_step installer done "Graphical installer ready"
+    fi
+
+    echo ""
+    echo "  A graphical installer window is opening now. It shows the progress"
+    echo "  bar, every step, live output and lists faults with Retry / Skip."
+    echo "  Keep this terminal open - closing it stops the installer."
+    echo ""
+    log "graphical installer starting: $out"
+    gui_step run running "Graphical installer owns the setup"
+
+    # The installer inherits the runtime dir and gets the repo layout +
+    # chosen interpreter via PSD_INSTALL_* (documented in installer/README).
+    PSD_INSTALL_APP_DIR="$APP_DIR" \
+    PSD_INSTALL_DESKTOP_DIR="${DESKTOP_DIR}" \
+    PSD_INSTALL_LOG_DIR="$LOG_DIR" \
+    PSD_INSTALL_PYCMD="$PYCMD" \
+    PSD_INSTALL_LLAMA_PORT="$LLAMA_PORT" \
+    PSD_INSTALL_MODEL_WAIT="$MODEL_WAIT_SECONDS" \
+    PSD_INSTALL_NO_VOICE="$NO_VOICE" \
+    PSD_INSTALL_NO_MODELS="${PSD_NO_LOCAL_MODEL:-}" \
+    PSD_INSTALL_NO_STT="${PSD_NO_LOCAL_STT:-}" \
+        "$out"
+    local rc=$?
+    log "graphical installer exited rc=$rc"
+
+    echo ""
+    echo "  ============================================================"
+    echo "   psd.ai has closed. See you soon!"
+    echo "  ============================================================"
+    exit $rc
+}
+
+run_graphical_installer   # returns 1 (no-op) when the terminal flow should run
 
 # ------------------------------------------------------------------
 # 3. Virtual environment

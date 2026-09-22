@@ -85,28 +85,41 @@ keeping chat and voice intact.
 That's it. It will:
 
 1. install the system packages this project builds and runs against, with
-   **`dnf`** (first run only, skipped when already present)
+   **`dnf`** (first run only, skipped when already present) — including the
+   Rust toolchain
 2. find Python 3.11+
-3. create a virtual environment & install dependencies (first run only)
-4. install the **Jarvis extras** — offline speech-to-text plus the PC-control
-   tools and packages (`psd.ai/requirements-jarvis.txt`, first run only,
-   warnings only if it fails)
-5. run first-time setup (data folders, database, `.env`)
-6. **download and run a hardware-fit group of 3 to 5 local models** (first run
-   only)
-7. **open the psd.ai desktop app** — on the very first launch it asks you to
-   create your admin account right in the window
+3. **build and open the graphical installer** — a native window, like a real
+   installer: progress bar, the running step, live output, and faults listed
+   properly with Retry / Skip buttons
+4. inside that window: create the virtual environment, install dependencies
+   and the **Jarvis extras** (offline speech-to-text + PC control), run
+   first-time setup, and build the psd.ai desktop app (first run only)
+5. **download and run a hardware-fit group of 3 to 5 local models** with its
+   own progress bar in the same window
+6. hit **Launch** and the **psd.ai desktop app** opens — on the very first
+   launch it asks you to create your admin account right in the window
 
-### Graphical install dashboard
+An already installed psd.ai skips the installer entirely and opens the app
+straight away.
 
-While all of that runs, `./run.sh` also opens a **dashboard in your browser**
-(`http://127.0.0.1:7123`, loopback only): a step timeline, the live model
-download as a real progress bar, cards for each local model as it comes up,
-and a red error panel the moment anything fails — so a first run that dies
-somewhere says *where* and *why* instead of leaving you scrolling a terminal.
-If the install fails, the page stays open for ~10 minutes after `run.sh`
-exits. No browser session (SSH)? The same content is in `logs/run.log` and
-`logs/local-model.log`. Skip the page with `./run.sh --no-gui`.
+### Graphical installer
+
+The installer window ([`installer/`](installer/README.md)) is a small Tauri
+app — not a browser page. It shows a real progress bar for the whole setup,
+a per-step timeline, the model-group download with percentage/GB numbers and
+a card per model as it comes up, and when something faults it stops and lists
+the fault properly: which step, the exit code, what failed, a fix hint, the
+suspicious output lines, and **Retry step** / **Skip step** buttons.
+Everything it runs is logged to `logs/installer.log` (models additionally to
+`logs/local-model.log`). Closing the installer window stops everything it
+started — no orphan downloads or servers.
+
+**No display (SSH), no Rust toolchain, or `--no-gui`?** The exact same steps
+run in the terminal instead, and `./run.sh` opens a **browser dashboard**
+(`http://127.0.0.1:7123`, loopback only) as the fallback progress view: step
+timeline, model download bar, model cards and an error panel. Without a
+browser session the same content is in `logs/run.log` and
+`logs/local-model.log`.
 
 ### run.sh options
 
@@ -120,7 +133,7 @@ exits. No browser session (SSH)? The same content is in `logs/run.log` and
 | `./run.sh --no-voice` | skip the Jarvis extras |
 | `./run.sh --no-models` | skip the local model group for this run |
 | `./run.sh --no-app` | set everything up, then stop without opening the window |
-| `./run.sh --no-gui` | install without the browser dashboard (terminal only) |
+| `./run.sh --no-gui` | install without the graphical installer window and browser dashboard (terminal only) |
 | `./run.sh --no-system-deps` | never touch `dnf`; use whatever is installed |
 | `./run.sh --skip-numpy-check` | start even if the numpy import probe fails |
 
