@@ -755,9 +755,13 @@ async def _run_step(step: Dict[str, str], index: int, workers: List[SwarmWorker]
             digest, sources = await web_research(task)
         if sources:
             web_sources = sources
+            pinned = "\n".join(f"[{i+1}] {src.get('title', '')[:80]} — {src['url']}"
+                               for i, src in enumerate(sources))
             context_blocks.append("Live web findings:\n" + (digest[:4000] or "(no results)"))
+            context_blocks.append(
+                "FOUND SOURCES (cite ONLY these URLs, exactly as written — never invent one):\n" + pinned)
         elif internet:
-            context_blocks.append("Web search returned nothing useful — rely on your own knowledge.")
+            context_blocks.append("Web search returned nothing useful — rely on your own knowledge and say clearly that you have no live source.")
         else:
             context_blocks.append("(internet disabled — answer from knowledge)")
 
@@ -837,6 +841,69 @@ async def _drive_steps(queue: "asyncio.Queue", gen):
 def _chunks(text: str, size: int = 80):
     for i in range(0, len(text), size):
         yield text[i:i + size]
+
+
+# English averages ~4 chars/token; the synthesis prompt may spend at most
+# ~45% of the manager's context window so the reply + chat template still fit.
+SYNTH_CONTEXT_FRACTION = 0.45
+SYNTH_MAX_CHARS = 12000
+SYNTH_MIN_CHARS = 2000
+
+
+def synthesis_budget(manager: "SwarmWorker") -> int:
+    """Chars the synthesis prompt may use for a given manager's context window.
+
+    A 4k-context model gets ~7k chars (~1.8k tokens), a 32k+ model the full
+    12k. This is exactly what stops a small-machine manager from overflowing
+    and killing the whole turn.
+    """
+    chars = manager.context * 4.0 * SYNTH_CONTEXT_FRACTION
+    return int(max(SYNTH_MIN_CHARS, min(SYNTH_MAX_CHARS, chars)))
+
+
+def build_synth_messages(message: str, reports: List[str], known: str, recent: str,
+                         sources: List[Dict[str, str]], budget: int,
+                         compact: bool = False) -> List[Dict[str, str]]:
+    """Synthesis prompt that ALWAYS fits ``budget`` chars.
+
+    compact=True shrinks everything hard (short report summaries) — the retry
+    ladder uses it when the full prompt already failed once.
+    """
+    reserved = 1400 if compact else 3400  # request + system + slack
+    per_report = max(350 if compact else 900, (budget - reserved) // max(1, len(reports) or 1))
+    body = "Specialist reports:\n" + ("\n\n".join(r[:per_report] for r in reports) or "(none)")
+    if sources:
+        body += "\n\nWeb sources to cite:\n" + "\n".join(
+            f"[{i+1}] {src['url']}" for i, src in enumerate(sources[:8]))
+    if compact:
+        user = (
+            f"User request: {message[:800]}\n\n{body[:max(800, budget - 1200)]}\n\n"
+            "Write the final answer to the user NOW, briefly and clearly. No preamble."
+        )
+    else:
+        user = (
+            (f"Recent conversation:\n{recent}\n" if recent else "")
+            + f"User request: {message[:1500]}\n\n"
+            + (f"Remembered facts:\n{known[:800]}\n\n" if known else "")
+            + body
+            + "\n\nWrite the final answer to the user yourself. Combine the reports, "
+              "drop failures quietly (or note them in one short line), keep it clear and complete. "
+              "Structure like a top-tier assistant: short intro, sections or bullets when they "
+              "help, code in fenced blocks, plain about anything uncertain. Cite web sources as "
+              "[1], [2] — only the URLs given above."
+        )
+    system = (
+        "You are the MANAGER of the psd.ai swarm. Combine the specialist reports into ONE "
+        "clear, correct, well-structured final answer."
+        if compact else
+        "You are the MANAGER of the psd.ai swarm — the strongest model on this machine. "
+        "Specialist workers did the sub-tasks; now give the user ONE clear, correct, "
+        "well-structured final answer. Cite web sources as [1], [2] when used."
+    )
+    return [
+        {"role": "system", "content": system[:600]},
+        {"role": "user", "content": user[:max(600, budget - 600)]},
+    ]
 
 
 async def orchestrate(message: str, owner: str = "", history: Optional[List[Dict[str, str]]] = None):
@@ -943,29 +1010,13 @@ async def orchestrate(message: str, owner: str = "", history: Optional[List[Dict
             role = "User" if h.get("role") == "user" else "Assistant"
             recent += f"{role}: {str(h.get('content', ''))[:400]}\n"
 
-    synth_user = (
-        (f"Recent conversation:\n{recent}\n" if recent else "")
-        + f"User request: {message}\n\n"
-        + (f"Remembered facts:\n{known}\n\n" if known else "")
-        + "Specialist reports:\n" + ("\n\n".join(reports) or "(none)")
-        + ("\n\nWeb sources to cite:\n" + "\n".join(f"[{i+1}] {src['url']}" for i, src in enumerate(all_sources)) if all_sources else "")
-        + "\n\nWrite the final answer to the user yourself. Combine the reports, "
-          "drop failures quietly (or note them in one short line), keep it clear and complete. "
-          "Structure it like a top-tier assistant: short intro, clear sections or bullets when "
-          "they help, code in fenced blocks, and say plainly when something is uncertain."
-    )
-    synth_messages = [
-        {"role": "system", "content": (
-            "You are the MANAGER of the psd.ai swarm — the strongest model on this machine. "
-            "Specialist workers did the sub-tasks; now give the user ONE clear, correct, "
-            "well-structured final answer. Cite web sources as [1], [2] when used."
-        )},
-        {"role": "user", "content": synth_user[:12000]},
-    ]
+    budget = synthesis_budget(manager)
+    synth_messages = build_synth_messages(message, reports, known, recent, all_sources, budget)
     synth_url = manager.base_url.rstrip("/") + "/chat/completions"
     verify = bool(settings.get("verify"))
 
     final_text = ""
+    degraded = False
     started = time.monotonic()
     try:
         if verify:
@@ -1014,23 +1065,54 @@ async def orchestrate(message: str, owner: str = "", history: Optional[List[Dict
                 final_text += piece
                 yield {"type": "synth_delta", "delta": piece}
     except Exception as exc:
-        # Synthesis failed — fall back to the raw specialist reports.
-        logger.warning("swarm synthesis failed: %s", exc)
-        yield {"type": "error", "error": f"Manager synthesis failed: {str(exc)[:200]}"}
+        # ── Synthesis ladder ────────────────────────────────────────────────
+        # Attempt 1 failed (usually a small-context manager overflowing on a
+        # big turn). Retry compact on the manager, then on ANY other live
+        # worker, before falling back to raw reports. The user must get the
+        # best answer this hardware can produce, not an error.
+        logger.warning("swarm synthesis attempt 1 failed: %s", exc)
+        degraded = True
+        compact_msgs = build_synth_messages(
+            message, reports, known, "", all_sources, budget, compact=True)
+        ladder = [manager] + [w for w in live if w.base_url and not w.is_manager]
+        for worker in ladder:
+            yield {"type": "step_retry", "index": -1,
+                   "worker": f"{worker.label} (answer)", "reason": "synthesis retry"}
+            url = worker.base_url.rstrip("/") + "/chat/completions"
+            try:
+                final_text = ""
+                async for piece in _chat_stream(url, worker.model_id, compact_msgs,
+                                                timeout=MANAGER_TIMEOUT_S,
+                                                api_key=worker.api_key):
+                    final_text += piece
+                    yield {"type": "synth_delta", "delta": piece}
+                if final_text.strip():
+                    break
+            except Exception as exc2:
+                logger.warning("swarm synthesis retry on %s failed: %s", worker.label, exc2)
+                final_text = ""
+
+    if not final_text.strip():
         ok_reports = [r for r in results if r.ok and r.text]
         if ok_reports:
-            yield {"type": "final", "text": "\n\n".join(r.text for r in ok_reports),
-                   "sources": all_sources, "steps": [asdict(r) for r in results]}
-        return
+            logger.warning("swarm: all synthesis attempts failed — shipping raw reports")
+            yield {"type": "error",
+                   "error": "Answer synthesis failed — showing the specialist reports raw. "
+                            "A stronger primary model helps: PSD_MODEL_PROFILE=power ./run.sh"}
+            final_text = "\n\n".join(r.text for r in ok_reports)
+        else:
+            yield {"type": "error", "error": "No worker could produce an answer for this request."}
+            return
 
     # Ship the (possibly critic-corrected) answer as one streamed reply.
-    if verify:
+    if verify and not degraded:
         for piece in _chunks(final_text):
             yield {"type": "synth_delta", "delta": piece}
     elapsed = time.monotonic() - started
     record_speed(manager.spec_id, max(1, len(final_text) // 4), elapsed)
 
-    yield {"type": "final", "text": final_text, "sources": all_sources, "steps": [asdict(r) for r in results]}
+    yield {"type": "final", "text": final_text, "sources": all_sources,
+           "steps": [asdict(r) for r in results], "degraded": degraded}
 
     # 4 ── learn (best-effort, never blocks the answer)
     if settings.get("auto_learn") and final_text:

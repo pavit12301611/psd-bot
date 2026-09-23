@@ -579,7 +579,7 @@ export interface SwarmHandlers {
   onStepRetry?: (index: number, fallbackWorker: string) => void;
   onStepDone?: (step: SwarmStepDone) => void;
   onSynthDelta?: (delta: string) => void;
-  onFinal?: (payload: { text: string; sources: { url: string; title?: string }[]; steps: SwarmStepDone[] }) => void;
+  onFinal?: (payload: { text: string; sources: { url: string; title?: string }[]; steps: SwarmStepDone[]; degraded?: boolean }) => void;
   onError?: (message: string) => void;
   onDone?: () => void;
 }

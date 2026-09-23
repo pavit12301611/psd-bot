@@ -494,3 +494,83 @@ def test_pick_critic_prefers_strongest_thinking_non_manager():
     # A team with no thinking worker falls back to the strongest non-manager.
     plain = [_worker("boss", params=30.0, manager=True), _worker("helper", params=8.0)]
     assert swarm.pick_critic(plain, plain[0]) is plain[1]
+
+
+# ── synthesis ladder (small-context managers survive big turns) ──────────────
+@pytest.mark.anyio
+async def test_synthesis_retries_compact_when_the_full_prompt_fails(monkeypatch):
+    """Full draft overflows → compact retry on another worker still answers."""
+    roster = _team()
+    monkeypatch.setattr(swarm, "build_roster", lambda owner="": roster)
+    monkeypatch.setattr(swarm, "search_knowledge", lambda q, owner="", limit=6: [])
+    big_call = {"n": 0}
+
+    async def fake_chat(url, model, messages, timeout, temperature=0.4, api_key=""):
+        prompt = messages[-1]["content"]
+        if "ONLY JSON" in prompt:
+            return ('{"steps":[{"kind":"general","task":"t"}]}', {})
+        if "CRITIC" in prompt:
+            raise RuntimeError("critic must not run in this test")
+        if "durable facts" in prompt:
+            return ("NONE", {})
+        # the DRAFT synthesis call (the big one) overflows the small manager
+        big_call["n"] += 1
+        raise RuntimeError("the request exceeds available context size")
+
+    async def fake_stream(url, model, messages, timeout, temperature=0.5, api_key=""):
+        assert "Specialist reports:" in messages[-1]["content"]
+        for piece in ["compact ", "rescue"]:
+            yield piece
+
+    async def fake_step(step, index, workers, knowledge, internet):
+        yield {"type": "step_done", "index": index, "kind": step["kind"], "task": step["task"],
+               "worker": "w", "worker_spec": "w", "ok": True, "text": "report",
+               "elapsed_s": 0.1, "tps": 0.0, "error": "", "web_sources": None}
+
+    monkeypatch.setattr(swarm, "_chat", fake_chat)
+    monkeypatch.setattr(swarm, "_chat_stream", fake_stream)
+    monkeypatch.setattr(swarm, "_run_step", fake_step)
+
+    events = [e async for e in swarm.orchestrate("big request")]
+    final = next(e for e in events if e["type"] == "final")
+    assert final["text"] == "compact rescue"
+    assert final["degraded"] is True  # GUI shows the badge
+    retries = [e for e in events if e["type"] == "step_retry"]
+    assert retries, "a synthesis retry must be announced"
+
+
+@pytest.mark.anyio
+async def test_research_worker_gets_real_pinned_urls(monkeypatch):
+    """A research step must cite the FOUND urls, never invent them."""
+    monkeypatch.setattr(swarm, "search_knowledge", lambda q, owner="", limit=6: [])
+
+    async def fake_research(query, max_pages=8):
+        return "digest text", [{"url": "https://real.example/a", "title": "Real"}]
+
+    captured = {}
+
+    async def fake_stream(url, model, messages, timeout, temperature=0.5, api_key=""):
+        captured["prompt"] = messages[-1]["content"]
+        yield "ok"
+
+    monkeypatch.setattr(swarm, "web_research", fake_research)
+    monkeypatch.setattr(swarm, "_chat_stream", fake_stream)
+
+    events = [e async for e in swarm._run_step(
+        {"kind": "research", "task": "find stuff"}, 0, _team(), [], True)]
+    done = next(e for e in events if e["type"] == "step_done")
+    assert done["ok"] and done["web_sources"][0]["url"] == "https://real.example/a"
+    assert "https://real.example/a" in captured["prompt"]
+    assert "never invent one" in captured["prompt"]
+
+
+def test_synthesis_budget_scales_with_manager_context():
+    small = _worker("tiny", params=5.0)
+    small.context = 4096
+    big = _worker("big", params=27.0)
+    big.context = 32768
+    assert swarm.synthesis_budget(small) <= 12500
+    assert swarm.synthesis_budget(small) < swarm.synthesis_budget(big)
+    msgs = swarm.build_synth_messages("req", ["r1", "r2"], "fact", "recent:", [], swarm.synthesis_budget(small))
+    total = sum(len(m["content"]) for m in msgs)
+    assert total <= swarm.synthesis_budget(small)

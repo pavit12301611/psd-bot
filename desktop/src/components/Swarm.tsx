@@ -79,6 +79,7 @@ interface SwarmTurn {
   sources: { url: string; title?: string }[];
   phase: string;
   error: string;
+  degraded: boolean;
   ts: number;
 }
 
@@ -175,7 +176,7 @@ export default function Swarm() {
 
     setTurns((list) => [
       ...list,
-      { id: turnId, question: text, plan: [], reports: [], live: {}, switched: {}, critic: "", answer: "", sources: [], phase: "plan", error: "", ts: Date.now() },
+      { id: turnId, question: text, plan: [], reports: [], live: {}, switched: {}, critic: "", answer: "", sources: [], phase: "plan", error: "", degraded: false, ts: Date.now() },
     ]);
 
     handleRef.current = swarmApi.chat(text, history, {
@@ -191,6 +192,7 @@ export default function Swarm() {
       onFinal: (payload) => patchTurn(turnId, (t) => {
         t.answer = payload.text || t.answer;
         t.sources = payload.sources || [];
+        t.degraded = !!payload.degraded;
         t.phase = "done";
       }),
       onError: (message) => patchTurn(turnId, (t) => { t.error = message; t.phase = "error"; }),
@@ -481,6 +483,11 @@ export default function Swarm() {
                   <div className="card selectable max-w-none p-4">
                     <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--accent)" }}>
                       <Crown size={12} /> {manager?.label || "Manager"} · final answer
+                      {t.degraded && (
+                        <span className="rounded-full px-2 py-0.5 text-[10px] normal-case" title="The manager couldn't do the full synthesis for this big turn — a compact retry or raw reports shipped instead. A stronger primary model (PSD_MODEL_PROFILE=power) handles heavy turns better." style={{ background: "color-mix(in oklab, #e5c07b 18%, transparent)", color: "#e5c07b" }}>
+                          degraded
+                        </span>
+                      )}
                     </div>
                     <div className={`md text-[14px] leading-relaxed ${t.phase === "synthesize" && !t.error ? "caret" : ""}`}>
                       <ReactMarkdown
